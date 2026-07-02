@@ -436,6 +436,28 @@ fn read_mutations(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyList>> {
     Ok(PyList::new(py, out)?.into())
 }
 
+/// Read up to `limit` most-recent ring events, resolved to
+/// `(kind, file, qualname, line)` in chronological order — the execution path
+/// leading up to the end, for the viewer's Events panel.
+#[pyfunction]
+fn read_events(py: Python<'_>, path: PathBuf, limit: usize) -> PyResult<Py<PyList>> {
+    let f = FlightFile::open(&path).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let mut out: Vec<(String, String, String, u32)> = Vec::new();
+    if let Some(ring) = f.event_ring() {
+        let start = ring.events.len().saturating_sub(limit);
+        for e in &ring.events[start..] {
+            let kind = EventKind::from_u8(e.kind).map(|k| k.name()).unwrap_or("?");
+            let (file, qualname) = ring
+                .codes
+                .get(&e.code_id)
+                .map(|c| (c.file.clone(), c.qualname.clone()))
+                .unwrap_or_default();
+            out.push((kind.to_string(), file, qualname, e.line));
+        }
+    }
+    Ok(PyList::new(py, out)?.into())
+}
+
 /// The Python module `flight._core`.
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -450,6 +472,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_summary, m)?)?;
     m.add_function(wrap_pyfunction!(read_crash, m)?)?;
     m.add_function(wrap_pyfunction!(read_mutations, m)?)?;
+    m.add_function(wrap_pyfunction!(read_events, m)?)?;
 
     // Event kind discriminants, so Python names them instead of hard-coding.
     m.add("EVENT_PY_START", EventKind::PyStart as u8)?;

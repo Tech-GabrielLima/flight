@@ -132,13 +132,22 @@ scripts/bench.py   baseline de overhead
 
 ---
 
-## CAPÍTULO 2 — FASE 1.5: o viewer (mecânica)
+## CAPÍTULO 2 — FASE 1.5: o viewer (mecânica)  **[implementada]**
 
-Uma aplicação [Textual](https://textual.textualize.io) que NUNCA entende bytes: consome a API de
-consulta do `flight-reader` (`frames()`, `locals(ix)`, `object(id)`, `aliases(id)`, `source(hash)`,
-`ring()`). O recurso-assinatura é `aliases()` — "este MESMO dict aparece no frame 3 e no frame 9" — um
-índice invertido `obj_id → aparições`. Valores inline no código: tokeniza as linhas visíveis e anota os
-`Name`s presentes nos locals. Árvores com expansão lazy abrem `.flight` de 100 MB instantaneamente.
+Uma aplicação [Textual](https://textual.textualize.io) que NUNCA entende bytes: consome a API do reader
+via `flight.read(path)` → `Crash`/`Recording` (`frames`, `objects`, `sources`, `exceptions`,
+`mutations`, `events`). O recurso-assinatura é o índice de aliases — "este MESMO dict aparece no frame 3
+e no frame 9" (`_viewer_model.alias_index`, marcado com `↔` na árvore). Valores inline no código:
+regex de identificadores nas linhas visíveis, anotando os `Name`s presentes nos locais do frame
+(`inline_values`). Árvore com **expansão lazy** do grafo de objetos (populada em `on_tree_node_expanded`)
+abre `.flight` grande instantaneamente.
+
+**Implementação (o que existe):** `_viewer_model.py` — toda a lógica sem render (janela de código,
+valores inline, índice de aliases, rótulos/filhos de nós, detalhe de objeto), **testável sem terminal**.
+`_viewer.py` — o `App` Textual (casca fina): `Tree` à esquerda; abas Source/Detail/Exception/Events/
+Timeline à direita; bindings `q` (sair), `a` (aliases do objeto sob o cursor), `e` (expandir frame).
+CLI `flight view`; Textual é dependência **opcional** (`[viewer]`), com degradação clara se ausente. O
+app é dirigido *headless* nos testes pelo `Pilot` do Textual (`app.run_test()`).
 
 ## CAPÍTULO 3 — FASE 2: time-travel de escopo  **[implementada]**
 
@@ -180,6 +189,6 @@ gerar `repro_bug.py` reconstruindo os argumentos do frame do crash a partir do g
 Fase 0  ✅  repo, maturin, ring contando eventos, round-trip do formato, benchmark baseline.
 Fase 1  ✅  excepthooks + captura de frames/locals + serializador de grafo + fontes + scrubbing.
 Fase 2  ✅  with flight.record(): MUTATION via LINE-diff + watch(); timeline (history/who/state_at).
-Fase 1.5    Viewer Textual (frames→locals→código inline→ring→timeline) sobre flight-reader.
+Fase 1.5 ✅ Viewer Textual (frames→locais→grafo→código inline→ring→timeline) sobre o reader.
 Fase 3      repro rasa → interposição de fontes → threads.
 ```

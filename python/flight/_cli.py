@@ -140,6 +140,21 @@ def _cmd_timeline(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_view(args: argparse.Namespace) -> int:
+    """Open the TUI viewer on a `.flight` file."""
+    try:
+        from ._viewer import run as run_viewer
+    except ImportError:
+        print(
+            "the viewer needs Textual — install it with:\n"
+            "    pip install 'flight-recorder[viewer]'   (or: pip install textual)",
+            file=sys.stderr,
+        )
+        return 1
+    run_viewer(args.file)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="flight",
@@ -170,6 +185,10 @@ def build_parser() -> argparse.ArgumentParser:
     tl.add_argument("--who", help="show writes to a watched container/object by name")
     tl.add_argument("--limit", type=int, default=50, help="max mutations to print (default 50)")
     tl.set_defaults(func=_cmd_timeline)
+
+    vw = sub.add_parser("view", help="open the interactive TUI viewer (needs textual)")
+    vw.add_argument("file", help="path to the .flight file")
+    vw.set_defaults(func=_cmd_view)
 
     return p
 

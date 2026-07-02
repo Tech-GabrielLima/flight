@@ -43,7 +43,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install (maturin develop) + test deps
         run: |
-          python -m pip install --upgrade pip maturin pytest
+          python -m pip install --upgrade pip maturin pytest textual
           maturin develop
       - name: pytest
         run: pytest -q

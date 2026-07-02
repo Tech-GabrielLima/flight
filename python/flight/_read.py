@@ -163,6 +163,11 @@ class Flight:
     def has_mutations(self) -> bool:
         return self.mutation_count > 0
 
+    def events(self, limit: int = 500) -> list[tuple[str, str, str, int]]:
+        """Up to `limit` most-recent ring events as `(kind, file, qualname,
+        line)`, chronological — the execution path before the end."""
+        return [tuple(e) for e in _core.read_events(str(self.path), limit)]
+
     def recording(self) -> Recording:
         """Load the MUTATION timeline (Phase-2 scope recording)."""
         rows = _core.read_mutations(str(self.path))

@@ -86,7 +86,7 @@ vêm redigidos por default.
 |------|------|-----------------|--------|
 | 0 | Fundação | Repo, CI, formato `.flight` v1, esqueleto Rust+Python funcionando | ✅ **concluída** |
 | 1 | Caixa-preta | Captura automática de exceções: todos os frames + locals + grafo de objetos + fontes | ✅ **concluída** |
-| 1.5 | Viewer | TUI navegável: frames → locals → grafo de objetos → código com valores inline | — |
+| 1.5 | Viewer | TUI navegável: frames → locals → grafo de objetos → código com valores inline | ✅ **concluída** |
 | 2 | Time-travel de escopo | `with flight.record():` grava escritas de estado; histórico por variável; "quem mutou" | ✅ **concluída** |
 | 3 | Re-execução | Gravação de fontes de não-determinismo; replay determinístico | pesquisa |
 
@@ -138,6 +138,23 @@ linha exata**; e a última escrita de um frame (sem evento LINE seguinte) é rec
 PY_RETURN/PY_UNWIND, então nada é perdido. Várias escritas na mesma linha física compartilham essa
 linha. Granularidade por instrução via instrumentação nativa de bytecode é o passo futuro
 (TECHNICAL.md §3.2, opção A). O que **não** está na Fase 2 (é Fase 3): replay determinístico.
+
+### 5.4 Definição de "pronto" da Fase 1.5 (o que esta entrega cumpre)
+
+- Viewer TUI ([Textual](https://textual.textualize.io)) — `flight view arquivo.flight` — que **só fala
+  com a API do reader** (nunca bytes crus, P3).
+- Painel esquerdo: `Tree` de **frames → locais → grafo de objetos** com expansão *lazy* (abre `.flight`
+  grande instantaneamente); objetos com aliasing marcados com `↔`.
+- Painéis (abas): **Source** (código do frame com a linha do crash marcada e **valores inline** nos
+  identificadores presentes nos locais — o recurso dos 5 segundos), **Detail** (tipo/valor/aliasing do
+  objeto selecionado), **Exception** (cadeia), **Events** (o ring — que caminho o código percorreu), e
+  **Timeline** (o log de mutações da Fase 2, quando presente).
+- Ação `a`: mostra onde o MESMO objeto aparece (aliases). Abre também arquivos só-ring (Fase 0) e de
+  escopo (Fase 2).
+- Lógica de render (valores inline, índice de aliases, janela de código) isolada em `_viewer_model`
+  (testável sem terminal); o app é uma casca fina, testada *headless* via o `Pilot` do Textual.
+- Textual é dependência **opcional** (`pip install flight-recorder[viewer]`); a CLI degrada com
+  mensagem clara se ausente. 36 testes Rust + 61 testes Python, todos verdes.
 
 ---
 

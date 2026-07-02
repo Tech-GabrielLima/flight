@@ -44,10 +44,10 @@ experiência de leitura; e o arquivo `.flight` compartilhável é o vetor viral.
 **É** um gravador post-mortem de escopo delimitado, com um viewer de primeira classe, evoluindo para
 time-travel debugging. **Não é** um APM, um debugger ao vivo (isso é o `pdb`) nem um profiler.
 
-## Status — Fase 2 (time-travel de escopo) ✅
+## Status — Fase 1.5 (o viewer) ✅
 
-As Fases 0 (fundação), 1 (a caixa-preta completa) e 2 (time-travel de escopo) estão concluídas, ponta
-a ponta e testadas.
+As Fases 0 (fundação), 1 (a caixa-preta completa), 2 (time-travel de escopo) e 1.5 (o viewer TUI) estão
+concluídas, ponta a ponta e testadas.
 
 - **`flight-format`** — o formato `.flight` versionado, append-only e tolerante a truncamento.
 - **`flight-reader`** — parser tolerante (índice do footer + scan linear; blocos desconhecidos como
@@ -70,7 +70,14 @@ instante (event sourcing). Captura robusta e à prova de versão, sem cirurgia d
 LINE no escopo, diff dos locais (rebinds) e diff de snapshot de objetos sob `watch()` (escritas em
 contêiner/atributo, sem quebrar `type()`). Opt-in e delimitado (P2).
 
-**Próximo:** Fase 1.5 — um viewer TUI (Textual) sobre o `flight-reader`.
+**Fase 1.5 — o viewer.** Um TUI ([Textual](https://textual.textualize.io)) sobre a API do reader:
+`pip install 'flight-recorder[viewer]'` e `python -m flight view arquivo.flight`. À esquerda, uma
+árvore **frames → locais → grafo de objetos** com expansão lazy (aliasing marcado com `↔`); à direita,
+abas com o **código** do frame (linha do crash marcada e **valores inline**), **Detail** do objeto,
+**Exception**, **Events** (o ring) e **Timeline** (mutações da Fase 2). A lógica de render fica em
+`_viewer_model` (testada sem terminal); o app é testado *headless* via o `Pilot` do Textual.
+
+**Próximo:** Fase 3 — replay determinístico.
 
 ## Instalar & compilar
 

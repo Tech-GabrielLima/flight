@@ -69,10 +69,10 @@ Three bets underpin the project (see [VISION.md](VISION.md)):
 **It is** a scoped, post-mortem recorder with a first-class viewer, evolving toward time-travel
 debugging. **It is not** an APM, a live debugger (that's `pdb`), or a profiler.
 
-## Status — Phase 2 (time-travel of scope) ✅
+## Status — Phase 1.5 (the viewer) ✅
 
-Phases 0 (foundation), 1 (the full black box) and 2 (scoped time-travel) are complete, end to end and
-fully tested.
+Phases 0 (foundation), 1 (the full black box), 2 (scoped time-travel) and 1.5 (the TUI viewer) are all
+complete, end to end and fully tested.
 
 **The engine (Rust):**
 - **`flight-format`** — the versioned, append-only, truncation-tolerant `.flight` format: header,
@@ -146,8 +146,36 @@ per-instruction capture via native bytecode instrumentation is a documented futu
 ([TECHNICAL.md](TECHNICAL.md) §3.2). Recording is opt-in and scope-delimited, so its cost is only paid
 around the code you're investigating (P2).
 
-**Next:** Phase 1.5 — a Textual TUI viewer over `flight-reader` (frames → locals → object graph →
-source with inline values, and a mutation timeline).
+**Phase 1.5 — the viewer.** A [Textual](https://textual.textualize.io) TUI over the reader's query
+surface (never bytes, P3):
+
+```console
+$ pip install 'flight-recorder[viewer]'
+$ python -m flight view flight-*.flight
+```
+
+Left: a `Tree` of **frames → locals → object graph** with lazy expansion (a 100 MB `.flight` opens
+instantly); objects that appear in more than one frame are marked `↔`. Right, in tabs: the **source**
+of the selected frame with the crash line marked and **values shown inline** on the code, an object
+**Detail** panel (type / value / aliasing), the **Exception** chain, the **Events** ring (what path the
+code took), and — for a scope recording — the **Timeline** of mutations.
+
+```text
+ compute_average
+ examples/crash.py:26
+
+     22 def compute_average(numbers):
+            ‹ numbers = list[0] ›               ← empty! the bug, inline on the code
+     23     total = 0
+     25         total += n
+ ▶   26     return total / len(numbers)
+            ‹ total = 0   numbers = list[0] ›
+```
+
+The rendering-free logic (inline values, alias index, source window) lives in `_viewer_model` and is
+unit-tested without a terminal; the app is a thin shell, tested headlessly via Textual's `Pilot`.
+
+**Next:** Phase 3 — deterministic replay (record the sources of non-determinism; re-run the flight).
 
 ## Install & build
 
@@ -155,8 +183,8 @@ Requires Python **3.12+** and a Rust toolchain.
 
 ```console
 python -m venv .venv && . .venv/bin/activate
-pip install maturin pytest
-maturin develop            # compiles the Rust core and installs `flight` into the venv
+pip install maturin pytest textual   # textual is only needed for the TUI viewer
+maturin develop                      # compiles the Rust core and installs `flight` into the venv
 ```
 
 ## Use
@@ -178,6 +206,7 @@ Or wrap a script without editing it:
 ```console
 python -m flight run myscript.py --its --args
 python -m flight inspect crash.flight
+python -m flight view crash.flight        # interactive TUI (needs the [viewer] extra)
 ```
 
 Configuration (`flight.Config`): `ring_capacity`, `output_dir`, `dump_on_crash`, `record_lines`, the
@@ -248,6 +277,8 @@ python/flight/
   _serialize.py    the object-graph serializer (identity, budget, limits)
   _scrub.py        sensitive-value redaction (P5)
   _adapters.py     type adapters (numpy/pandas/…)
+  _viewer.py       the Textual TUI app (Phase 1.5)
+  _viewer_model.py rendering-free viewer logic (inline values, aliases)
   _read.py, _cli.py, _config.py
 tests/             Python tests (serializer, capture, reader, CLI)
 scripts/bench.py   overhead baseline
