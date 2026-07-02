@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 
 use flight_format::{
-    BlockType, CodeInfo, Event, EventKind, FlightWriter, HeaderMeta, MetaBlock, RingPayload,
-    TRAILER_MAGIC,
+    BlockType, CodeInfo, Event, EventKind, ExceptionLink, FlightWriter, FrameInfo, HeaderMeta,
+    MetaBlock, ObjectItem, ObjectNode, RingPayload, SourceFile, TRAILER_MAGIC,
 };
 use flight_reader::FlightFile;
 
@@ -221,4 +221,118 @@ fn future_format_version_is_rejected_not_misread() {
 fn trailer_magic_constant_matches_writer_output() {
     let bytes = write_full_file();
     assert_eq!(&bytes[bytes.len() - 4..], TRAILER_MAGIC);
+}
+
+// -- Phase 1: crash blocks ---------------------------------------------------
+
+#[test]
+fn crash_blocks_roundtrip_and_aliasing_resolves() {
+    let mut buf = Vec::new();
+    let mut w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
+    w.write_block_named(BlockType::Meta, &sample_meta())
+        .unwrap();
+    w.write_block(
+        BlockType::Source,
+        &vec![SourceFile {
+            filename: "app.py".into(),
+            sha1: "h".into(),
+            text: "x=1\n".into(),
+        }],
+    )
+    .unwrap();
+    w.write_block(
+        BlockType::Exception,
+        &vec![
+            ExceptionLink {
+                exc_type: "ZeroDivisionError".into(),
+                message: "division by zero".into(),
+                relation: "head".into(),
+            },
+            ExceptionLink {
+                exc_type: "ValueError".into(),
+                message: "bad".into(),
+                relation: "context".into(),
+            },
+        ],
+    )
+    .unwrap();
+    // Two frames sharing object id 7 — the aliasing case.
+    let frames = vec![
+        FrameInfo {
+            file: "app.py".into(),
+            qualname: "inner".into(),
+            lineno: 8,
+            first_lineno: 4,
+            locals: vec![("cfg".into(), 7)],
+        },
+        FrameInfo {
+            file: "app.py".into(),
+            qualname: "outer".into(),
+            lineno: 20,
+            first_lineno: 15,
+            locals: vec![("config".into(), 7), ("n".into(), 3)],
+        },
+    ];
+    w.write_block(BlockType::Frame, &frames).unwrap();
+    let objects = vec![
+        ObjectNode {
+            id: 7,
+            kind: "dict".into(),
+            repr: None,
+            type_name: None,
+            length: Some(1),
+            truncated: false,
+            items: vec![ObjectItem {
+                key: Some("k".into()),
+                value_id: 3,
+            }],
+        },
+        ObjectNode {
+            id: 3,
+            kind: "int".into(),
+            repr: Some("3".into()),
+            type_name: None,
+            length: None,
+            truncated: false,
+            items: vec![],
+        },
+    ];
+    w.write_block(BlockType::Object, &objects).unwrap();
+    w.finish().unwrap();
+
+    let f = FlightFile::from_bytes(&buf).unwrap();
+    assert!(!f.partial);
+
+    let excs = f.exceptions();
+    assert_eq!(excs.len(), 2);
+    assert_eq!(excs[0].exc_type, "ZeroDivisionError");
+    assert_eq!(excs[1].relation, "context");
+
+    assert_eq!(f.sources().len(), 1);
+    assert_eq!(f.frames(), frames);
+
+    let map = f.object_map();
+    assert_eq!(map[&7].kind, "dict");
+    assert_eq!(map[&3].repr.as_deref(), Some("3"));
+
+    // Object 7 is aliased across both frames, under different local names.
+    let aliases = f.aliases(7);
+    assert_eq!(
+        aliases,
+        vec![(0, "cfg".to_string()), (1, "config".to_string())]
+    );
+    assert!(f.aliases(999).is_empty());
+}
+
+#[test]
+fn crash_accessors_are_empty_on_a_ring_only_file() {
+    // A Phase-0 file (META + EVENT_RING) has no crash blocks; accessors must
+    // return empty, not error.
+    let bytes = write_full_file();
+    let f = FlightFile::from_bytes(&bytes).unwrap();
+    assert!(f.exceptions().is_empty());
+    assert!(f.frames().is_empty());
+    assert!(f.sources().is_empty());
+    assert!(f.objects().is_empty());
+    assert!(f.event_ring().is_some());
 }

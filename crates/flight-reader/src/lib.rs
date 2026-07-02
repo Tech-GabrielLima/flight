@@ -16,9 +16,12 @@
 
 use std::path::Path;
 
+use std::collections::HashMap;
+
 use flight_format::{
-    BlockType, FormatError, HeaderMeta, IndexEntry, MetaBlock, RingPayload, BLOCK_HEADER_LEN,
-    FORMAT_VERSION, HEADER_FIXED_LEN, MAGIC, TRAILER_LEN, TRAILER_MAGIC,
+    BlockType, ExceptionLink, FormatError, FrameInfo, HeaderMeta, IndexEntry, MetaBlock,
+    ObjectNode, RingPayload, SourceFile, BLOCK_HEADER_LEN, FORMAT_VERSION, HEADER_FIXED_LEN, MAGIC,
+    TRAILER_LEN, TRAILER_MAGIC,
 };
 
 /// One block as found in the file, payload already decompressed.
@@ -93,6 +96,51 @@ impl FlightFile {
     /// The first EVENT_RING block, decoded.
     pub fn event_ring(&self) -> Option<RingPayload> {
         self.first_payload(BlockType::EventRing)
+    }
+
+    /// The exception chain (EXCEPTION block), most-recent-first.
+    pub fn exceptions(&self) -> Vec<ExceptionLink> {
+        self.first_payload(BlockType::Exception).unwrap_or_default()
+    }
+
+    /// The captured stack frames (FRAME block), crash-first.
+    pub fn frames(&self) -> Vec<FrameInfo> {
+        self.first_payload(BlockType::Frame).unwrap_or_default()
+    }
+
+    /// The source files captured (SOURCE blocks — there may be several).
+    pub fn sources(&self) -> Vec<SourceFile> {
+        self.blocks
+            .iter()
+            .filter(|b| b.block_type == BlockType::Source as u8)
+            .filter_map(|b| flight_format::from_msgpack::<Vec<SourceFile>>(&b.payload).ok())
+            .flatten()
+            .collect()
+    }
+
+    /// The object graph (OBJECT block) as a flat list of nodes.
+    pub fn objects(&self) -> Vec<ObjectNode> {
+        self.first_payload(BlockType::Object).unwrap_or_default()
+    }
+
+    /// The object graph indexed by node id, for random access / expansion.
+    pub fn object_map(&self) -> HashMap<u64, ObjectNode> {
+        self.objects().into_iter().map(|n| (n.id, n)).collect()
+    }
+
+    /// Every place a given object id appears as a frame local — the
+    /// signature "this SAME object is here and here" feature (VISION.md §6).
+    /// Returns `(frame_index, local_name)` pairs.
+    pub fn aliases(&self, object_id: u64) -> Vec<(usize, String)> {
+        let mut out = Vec::new();
+        for (fi, frame) in self.frames().iter().enumerate() {
+            for (name, id) in &frame.locals {
+                if *id == object_id {
+                    out.push((fi, name.clone()));
+                }
+            }
+        }
+        out
     }
 
     fn first_payload<T: serde::de::DeserializeOwned>(&self, ty: BlockType) -> Option<T> {

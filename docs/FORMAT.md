@@ -65,7 +65,16 @@ reserved now, so the Phase-1.5 viewer can gain Phase-2 powers without a format r
 | 0x70 | INDEX | 0 | footer: index of all blocks, written on clean close only |
 | 0x7F | EXT | — | extension space; unknown to a reader ⇒ skipped |
 
-A Phase-0 file contains **META** and **EVENT_RING**.
+A Phase-0 file contains **META** and **EVENT_RING**. A Phase-1 crash file adds **EXCEPTION**,
+**FRAME**, **OBJECT** and one **SOURCE** block per file involved.
+
+### FRAME / OBJECT payloads
+
+Frames are ordered crash-first (frame 0 raised the exception). Each frame's locals map a name to an
+object-graph node id; two frames sharing an object point at the *same* id — that is how aliasing is
+recorded. Object nodes are flat records `(id, kind, repr, type_name, length, truncated, items)` where
+`items` are `(key_or_null, child_id)` edges, so the graph is reconstructed by id and cycles are just
+back-edges. `length` keeps the real size when a container/string was truncated to the capture limits.
 
 ### EVENT_RING payload
 

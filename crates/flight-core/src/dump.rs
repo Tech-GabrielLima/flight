@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use flight_format::{BlockType, FlightWriter, FormatError, HeaderMeta, MetaBlock};
+use flight_format::{
+    BlockType, ExceptionLink, FlightWriter, FormatError, FrameInfo, HeaderMeta, MetaBlock,
+    ObjectNode, SourceFile,
+};
 
 use crate::recorder::Recorder;
 
@@ -19,6 +22,45 @@ pub fn dump(path: &Path, meta: MetaBlock, recorder: &Recorder) -> Result<(), For
     let header = HeaderMeta::new(&meta.flight_version);
     let mut w = FlightWriter::create(path, &header)?;
     w.write_block_named(BlockType::Meta, &meta)?;
+    let ring = recorder.snapshot_ring();
+    w.write_block(BlockType::EventRing, &ring)?;
+    w.finish()?;
+    Ok(())
+}
+
+/// The full Phase-1 black box: META, one SOURCE block per file, the EXCEPTION
+/// chain, the FRAME stack, the OBJECT graph, and the EVENT_RING.
+///
+/// The Python engine has already done the dangerous work (walking live objects
+/// under a time/byte budget); this just lays the blocks down in order and
+/// closes the file. Written crash-first so that if the reader is ever truncated
+/// mid-file, the most relevant frames/objects survive (VISION.md §1.3).
+pub fn dump_crash(
+    path: &Path,
+    meta: MetaBlock,
+    sources: Vec<SourceFile>,
+    exceptions: Vec<ExceptionLink>,
+    frames: Vec<FrameInfo>,
+    objects: Vec<ObjectNode>,
+    recorder: &Recorder,
+) -> Result<(), FormatError> {
+    let header = HeaderMeta::new(&meta.flight_version);
+    let mut w = FlightWriter::create(path, &header)?;
+    w.write_block_named(BlockType::Meta, &meta)?;
+    if !exceptions.is_empty() {
+        w.write_block(BlockType::Exception, &exceptions)?;
+    }
+    if !frames.is_empty() {
+        w.write_block(BlockType::Frame, &frames)?;
+    }
+    if !objects.is_empty() {
+        w.write_block(BlockType::Object, &objects)?;
+    }
+    // One SOURCE block per file keeps each self-contained and lets a truncated
+    // reader still use the files it did get.
+    for src in sources {
+        w.write_block(BlockType::Source, &vec![src])?;
+    }
     let ring = recorder.snapshot_ring();
     w.write_block(BlockType::EventRing, &ring)?;
     w.finish()?;

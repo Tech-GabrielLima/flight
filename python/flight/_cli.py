@@ -54,6 +54,16 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
         argv = f.meta.get("argv", [])
         print(f"    argv     {' '.join(argv) if argv else '(none)'}")
         print(f"    cwd      {f.meta.get('cwd', '?')}")
+
+    if f.exceptions:
+        print("exception   :")
+        for i, (exc_type, message, relation) in enumerate(f.exceptions):
+            prefix = "    " if i == 0 else f"    ({relation}) "
+            print(f"{prefix}{exc_type}: {message}")
+
+    if f.has_crash:
+        _print_frames(f, show_locals=not args.no_locals, max_locals=args.max_locals)
+
     wrapped = "  (ring wrapped — older events dropped)" if f.wrapped else ""
     print(f"events      : {f.event_count} across {f.code_count} code objects{wrapped}")
     if f.recent_events:
@@ -62,6 +72,38 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
             loc = f"{Path(file).name}:{line}" if file else "?"
             print(f"    {kind:<10} {loc}")
     return 0
+
+
+# Scalar/leaf kinds: sharing one of these across frames is not the aliasing
+# insight (None/True/small ints are singletons), so we don't flag them.
+_SCALAR_KINDS = {"none", "bool", "int", "float", "str", "bytes", "redacted", "truncated"}
+
+
+def _print_frames(f, *, show_locals: bool, max_locals: int) -> None:
+    crash = f.crash()
+    # Which reference objects appear in more than one frame → aliased (↔).
+    counts: dict[int, int] = {}
+    for fr in crash.frames:
+        for _name, oid in fr.locals:
+            node = crash.objects.get(oid)
+            if node is not None and node["kind"] not in _SCALAR_KINDS:
+                counts[oid] = counts.get(oid, 0) + 1
+    print(f"frames      : {len(crash.frames)} (crash first)")
+    for i, fr in enumerate(crash.frames):
+        where = f"{Path(fr.file).name}:{fr.lineno}"
+        print(f"  #{i} {fr.qualname}  ({where})")
+        if not show_locals:
+            continue
+        for name, oid in fr.locals[:max_locals]:
+            alias = " ↔" if counts.get(oid, 0) > 1 else ""
+            print(f"        {name} = {_clip(crash.render(oid))}{alias}")
+        if len(fr.locals) > max_locals:
+            print(f"        … {len(fr.locals) - max_locals} more locals")
+
+
+def _clip(s: str, width: int = 68) -> str:
+    s = s.replace("\n", "\\n")
+    return s if len(s) <= width else s[:width] + "…"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -82,6 +124,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     ins = sub.add_parser("inspect", help="print a summary of a .flight file")
     ins.add_argument("file", help="path to the .flight file")
+    ins.add_argument("--no-locals", action="store_true", help="don't print frame locals")
+    ins.add_argument(
+        "--max-locals", type=int, default=12, help="max locals shown per frame (default 12)"
+    )
     ins.set_defaults(func=_cmd_inspect)
 
     return p

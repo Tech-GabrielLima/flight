@@ -24,9 +24,28 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use flight_format::{EventKind, MetaBlock};
+use flight_format::{
+    EventKind, ExceptionLink, FrameInfo, MetaBlock, ObjectItem, ObjectNode, SourceFile,
+};
 use flight_reader::FlightFile;
 use recorder::Recorder;
+
+/// `(filename, sha1, text)` as passed from Python.
+type SourceTuple = (String, String, String);
+/// `(exc_type, message, relation)`.
+type ExceptionTuple = (String, String, String);
+/// `(file, qualname, lineno, first_lineno, [(name, object_id)])`.
+type FrameTuple = (String, String, u32, u32, Vec<(String, u64)>);
+/// `(id, kind, repr, type_name, length, truncated, [(key, value_id)])`.
+type ObjectTuple = (
+    u64,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<u64>,
+    bool,
+    Vec<(Option<String>, u64)>,
+);
 
 /// The process-global recorder, built once on first use.
 static RECORDER: OnceLock<Recorder> = OnceLock::new();
@@ -122,6 +141,88 @@ fn dump_file(
     dump::dump(&path, meta, recorder()).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
+/// Write the full Phase-1 crash black box to `path`.
+///
+/// Data is passed as plain tuples that PyO3 converts automatically — the object
+/// graph and frames are built in Python (the object walk runs once, in a doomed
+/// process), and this only lays down the blocks. See [`dump::dump_crash`].
+#[pyfunction]
+#[pyo3(name = "dump_crash")]
+#[allow(clippy::too_many_arguments)]
+fn dump_crash(
+    path: PathBuf,
+    python_version: String,
+    platform: String,
+    argv: Vec<String>,
+    cwd: String,
+    flight_version: String,
+    sources: Vec<SourceTuple>,
+    exceptions: Vec<ExceptionTuple>,
+    frames: Vec<FrameTuple>,
+    objects: Vec<ObjectTuple>,
+) -> PyResult<()> {
+    let meta = MetaBlock {
+        python_version,
+        platform,
+        argv,
+        cwd,
+        flight_version,
+    };
+    let sources: Vec<SourceFile> = sources
+        .into_iter()
+        .map(|(filename, sha1, text)| SourceFile {
+            filename,
+            sha1,
+            text,
+        })
+        .collect();
+    let exceptions: Vec<ExceptionLink> = exceptions
+        .into_iter()
+        .map(|(exc_type, message, relation)| ExceptionLink {
+            exc_type,
+            message,
+            relation,
+        })
+        .collect();
+    let frames: Vec<FrameInfo> = frames
+        .into_iter()
+        .map(|(file, qualname, lineno, first_lineno, locals)| FrameInfo {
+            file,
+            qualname,
+            lineno,
+            first_lineno,
+            locals,
+        })
+        .collect();
+    let objects: Vec<ObjectNode> = objects
+        .into_iter()
+        .map(
+            |(id, kind, repr, type_name, length, truncated, items)| ObjectNode {
+                id,
+                kind,
+                repr,
+                type_name,
+                length,
+                truncated,
+                items: items
+                    .into_iter()
+                    .map(|(key, value_id)| ObjectItem { key, value_id })
+                    .collect(),
+            },
+        )
+        .collect();
+    dump::dump_crash(
+        &path,
+        meta,
+        sources,
+        exceptions,
+        frames,
+        objects,
+        recorder(),
+    )
+    .map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
 /// Read a `.flight` file and return a summary dict (used by `flight inspect`).
 #[pyfunction]
 fn read_summary(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
@@ -135,6 +236,15 @@ fn read_summary(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
 
     let block_names: Vec<&str> = f.blocks.iter().map(|b| b.type_name()).collect();
     d.set_item("blocks", block_names)?;
+
+    let excs: Vec<(String, String, String)> = f
+        .exceptions()
+        .into_iter()
+        .map(|e| (e.exc_type, e.message, e.relation))
+        .collect();
+    d.set_item("exceptions", excs)?;
+    d.set_item("frame_count", f.frames().len())?;
+    d.set_item("object_count", f.objects().len())?;
 
     if let Some(meta) = f.meta() {
         let m = PyDict::new(py);
@@ -171,6 +281,56 @@ fn read_summary(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
     Ok(d.into())
 }
 
+/// Read the full crash detail from a `.flight` file: exception chain, frames
+/// with their locals, the object graph, and source texts. Used by the enriched
+/// `flight inspect` and, later, the TUI viewer.
+#[pyfunction]
+fn read_crash(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
+    let f = FlightFile::open(&path).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let d = PyDict::new(py);
+    d.set_item("partial", f.partial)?;
+
+    let excs: Vec<(String, String, String)> = f
+        .exceptions()
+        .into_iter()
+        .map(|e| (e.exc_type, e.message, e.relation))
+        .collect();
+    d.set_item("exceptions", excs)?;
+
+    let frames: Vec<FrameTuple> = f
+        .frames()
+        .into_iter()
+        .map(|fr| (fr.file, fr.qualname, fr.lineno, fr.first_lineno, fr.locals))
+        .collect();
+    d.set_item("frames", frames)?;
+
+    let objects = PyDict::new(py);
+    for n in f.objects() {
+        let node = PyDict::new(py);
+        node.set_item("kind", &n.kind)?;
+        node.set_item("repr", &n.repr)?;
+        node.set_item("type_name", &n.type_name)?;
+        node.set_item("length", n.length)?;
+        node.set_item("truncated", n.truncated)?;
+        let items: Vec<(Option<String>, u64)> = n
+            .items
+            .into_iter()
+            .map(|it| (it.key, it.value_id))
+            .collect();
+        node.set_item("items", items)?;
+        objects.set_item(n.id, node)?;
+    }
+    d.set_item("objects", objects)?;
+
+    let sources = PyDict::new(py);
+    for s in f.sources() {
+        sources.set_item(s.filename, s.text)?;
+    }
+    d.set_item("sources", sources)?;
+
+    Ok(d.into())
+}
+
 /// The Python module `flight._core`.
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -180,7 +340,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(stats, m)?)?;
     m.add_function(wrap_pyfunction!(reset, m)?)?;
     m.add_function(wrap_pyfunction!(dump_file, m)?)?;
+    m.add_function(wrap_pyfunction!(dump_crash, m)?)?;
     m.add_function(wrap_pyfunction!(read_summary, m)?)?;
+    m.add_function(wrap_pyfunction!(read_crash, m)?)?;
 
     // Event kind discriminants, so Python names them instead of hard-coding.
     m.add("EVENT_PY_START", EventKind::PyStart as u8)?;

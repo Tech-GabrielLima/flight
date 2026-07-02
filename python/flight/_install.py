@@ -121,7 +121,9 @@ class _Session:
         # user's own excepthook / default traceback still runs (P1).
         try:
             if self.config.dump_on_crash:
-                path = dump(config=self.config)
+                from ._capture import write_crash_flight
+
+                path = write_crash_flight(exc_type, exc_value, exc_tb, self.config)
                 if path is not None:
                     print(f"[flight] recorded {path}", file=sys.stderr)
         except Exception:
@@ -131,7 +133,9 @@ class _Session:
     def _threading_excepthook(self, args):
         try:
             if self.config.dump_on_crash:
-                dump(config=self.config)
+                from ._capture import write_crash_flight
+
+                write_crash_flight(args.exc_type, args.exc_value, args.exc_traceback, self.config)
         except Exception:
             pass
         if self._prev_threading_hook is not None:

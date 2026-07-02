@@ -14,35 +14,39 @@
 > recording is flushed to a self-describing, truncation-tolerant `.flight` file you can inspect.
 
 ```console
-$ python -m flight run examples/crash.py
+$ python examples/crash.py
 Traceback (most recent call last):
   ...
 ZeroDivisionError: division by zero
-[flight] recorded flight-48103-1783001126460.flight
+[flight] recorded flight-57275-1783002970970.flight
 
-$ python -m flight inspect flight-48103-1783001126460.flight
-flight file : flight-48103-1783001126460.flight
+$ python -m flight inspect flight-57275-1783002970970.flight
+flight file : flight-57275-1783002970970.flight
 format      : v1  (complete, index)
-written by  : flight 0.0.1 at 2026-07-02T11:05:26
-blocks      : META, EVENT_RING
-environment :
-    python   3.13.12
-    platform Linux-7.0.12-x86_64-with-glibc2.42
-    argv     examples/crash.py
-    cwd      /home/you/flight
-events      : 16 across 4 code objects
-last events (most recent first):
-    PY_UNWIND  crash.py:0      # ZeroDivisionError unwinding back up the stack…
-    RAISE      crash.py:0      # …frame by frame, from compute_average →
-    PY_UNWIND  crash.py:0      #    summarize → main
-    RAISE      crash.py:0
-    PY_START   crash.py:4      # compute_average was entered right before
-    PY_RETURN  crash.py:0
-    ...
+blocks      : META, EXCEPTION, FRAME, OBJECT, SOURCE, EVENT_RING
+exception   :
+    ZeroDivisionError: division by zero
+frames      : 4 (crash first)
+  #0 compute_average  (crash.py:26)
+        numbers = list[0] ↔          # empty! this is the bug
+        total = 0
+  #1 summarize  (crash.py:32)
+        datasets = dict[3] ↔
+        results = list[2]
+        name = evening               # …and this names the culprit dataset
+        data = list[0] ↔             # the SAME empty list, aliased into compute_average
+        avg = 10.0
+  #2 main  (crash.py:43)
+        datasets = dict[3] ↔
+  #3 <module>  (crash.py:47)
+        ...
 ```
 
-(That's the default call-level black box. Pass `record_lines=True` — or a future CLI flag — to also
-capture a `LINE` event per source line and see the exact lines executed.)
+The `↔` marks an object that is the *same* across frames: `data` (the empty `evening` dataset) is
+literally `numbers` inside `compute_average`. The black box diagnosed the bug — no reproduction
+needed. Every frame's locals, the full object graph, the exception chain and the source are in the
+file; `flight inspect --max-locals 40` shows more, and the Phase-1.5 TUI viewer will make it
+navigable.
 
 ---
 
@@ -65,24 +69,40 @@ Three bets underpin the project (see [VISION.md](VISION.md)):
 **It is** a scoped, post-mortem recorder with a first-class viewer, evolving toward time-travel
 debugging. **It is not** an APM, a live debugger (that's `pdb`), or a profiler.
 
-## Status — Phase 0 (foundation) ✅
+## Status — Phase 1 (the black box) ✅
 
-This release is the *hello-world of the whole stack*, end to end and fully tested:
+Phases 0 (foundation) and 1 (the full black box) are complete, end to end and fully tested.
 
+**The engine (Rust):**
 - **`flight-format`** — the versioned, append-only, truncation-tolerant `.flight` format: header,
   typed blocks (msgpack + zstd), optional footer index.
-- **`flight-reader`** — a tolerant parser: uses the footer index when present, falls back to a linear
-  scan otherwise; keeps unknown block types as raw bytes; degrades to `partial` instead of failing.
-- **`flight-core`** — the hot path in Rust: a lock-free per-thread ring buffer, a global logical clock,
-  the code map, and the `.flight` writer, exposed to Python as `flight._core`.
-- **`flight` (Python)** — `install()`/`uninstall()` wiring `sys.monitoring`, an `excepthook` that
-  auto-dumps on crash, `capture()` for handled errors, and a `python -m flight run|inspect` CLI.
+- **`flight-reader`** — a tolerant parser: footer-index fast path with a linear-scan fallback; keeps
+  unknown block types as raw bytes; degrades to `partial` instead of failing. Query surface for the
+  exception chain, frames, object graph and **aliasing**.
+- **`flight-core`** — the hot path: a lock-free per-thread ring buffer, a global logical clock, the
+  code map, and the `.flight` writer, exposed to Python as `flight._core`.
 
-What a Phase-0 `.flight` contains: the process **environment** (META) and the **event ring** — the last
-thousands of PY_START / LINE / RETURN / RAISE events across all threads, merged by logical time. That
-already answers *"what path did the code take in the instants before it died?"*.
+**The recorder (Python):** `install()`/`uninstall()` wiring `sys.monitoring`, an `excepthook` that
+auto-writes the crash black box, `capture()` for handled errors, and a `python -m flight run|inspect`
+CLI.
 
-**Next:** Phase 1 adds frames, locals and the serialized object graph; Phase 1.5 a Textual TUI viewer.
+**What a `.flight` contains after Phase 1:**
+- the process **environment** (META) and the **event ring** — the last thousands of
+  PY_START / LINE / RETURN / RAISE events, merged by logical time (Phase 0);
+- the **exception chain** (`__cause__` / `__context__`);
+- every **stack frame**, crash-first, with its **locals**;
+- the serialized **object graph** — identity-preserving, so aliasing (the *same* object in two
+  frames) is visible; cycle-safe; with per-container/-string limits, a depth cap, and a global
+  time + byte budget so a giant or hostile object can never blow up or hang the capture;
+- the **source** of every file involved, so the values make sense on another machine.
+
+Two safety properties are first-class: **scrubbing** (P5) redacts values whose name looks sensitive
+(`password`, `token`, `secret`, …) before any byte is written, and every step is guarded so the
+recorder can never crash the program it is recording (P1). Type **adapters** describe big objects
+(numpy arrays, pandas frames) by shape/dtype/preview instead of dumping their contents.
+
+**Next:** Phase 1.5 — a Textual TUI viewer over `flight-reader` (frames → locals → object graph →
+source with inline values).
 
 ## Install & build
 
@@ -115,9 +135,18 @@ python -m flight run myscript.py --its --args
 python -m flight inspect crash.flight
 ```
 
-Configuration (`flight.Config`): `ring_capacity`, `output_dir`, `dump_on_crash`, `record_lines`, and
-the `deny_prefixes` / `force_include` policy that keeps stdlib and site-packages out of the recording
-by default.
+Configuration (`flight.Config`): `ring_capacity`, `output_dir`, `dump_on_crash`, `record_lines`, the
+`deny_prefixes` / `force_include` policy that keeps stdlib and site-packages out of the recording, and
+the crash-capture budget (`capture_deadline_ms`, `capture_max_bytes`, `max_str`, `max_container`,
+`max_depth`, `repr_limit`, `scrub_patterns`).
+
+Register an adapter for your own big types so they're summarized, not dumped:
+
+```python
+@flight.adapter("mypkg.Matrix")
+def _(m):
+    return flight.Adapted("matrix", f"{m.rows}x{m.cols}", {"rows": m.rows, "cols": m.cols})
+```
 
 ## Overhead — the honest picture
 
@@ -164,11 +193,17 @@ python scripts/bench.py    # steady-state overhead baseline
 
 ```
 crates/
-  flight-format/   the .flight format: blocks, events, writer
-  flight-reader/   tolerant parser + query surface
+  flight-format/   the .flight format: blocks, events, crash payloads, writer
+  flight-reader/   tolerant parser + query surface (exceptions, frames, object graph, aliases)
   flight-core/     ring buffer, recorder, PyO3 bindings (module flight._core)
-python/flight/     public API, sys.monitoring wiring, CLI
-tests/             Python integration tests
+python/flight/
+  _install.py      sys.monitoring wiring + exception hooks
+  _capture.py      the crash-capture algorithm (frames, locals, sources, chain)
+  _serialize.py    the object-graph serializer (identity, budget, limits)
+  _scrub.py        sensitive-value redaction (P5)
+  _adapters.py     type adapters (numpy/pandas/…)
+  _read.py, _cli.py, _config.py
+tests/             Python tests (serializer, capture, reader, CLI)
 scripts/bench.py   overhead baseline
 ```
 

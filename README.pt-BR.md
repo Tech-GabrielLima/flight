@@ -44,23 +44,25 @@ experiência de leitura; e o arquivo `.flight` compartilhável é o vetor viral.
 **É** um gravador post-mortem de escopo delimitado, com um viewer de primeira classe, evoluindo para
 time-travel debugging. **Não é** um APM, um debugger ao vivo (isso é o `pdb`) nem um profiler.
 
-## Status — Fase 0 (fundação) ✅
+## Status — Fase 1 (a caixa-preta) ✅
 
-Esta entrega é o *hello-world de toda a stack*, ponta a ponta e totalmente testado:
+As Fases 0 (fundação) e 1 (a caixa-preta completa) estão concluídas, ponta a ponta e testadas.
 
 - **`flight-format`** — o formato `.flight` versionado, append-only e tolerante a truncamento.
-- **`flight-reader`** — parser tolerante: usa o índice do footer quando existe, cai para scan linear
-  quando não; mantém blocos desconhecidos como bytes crus; degrada para `partial` em vez de falhar.
-- **`flight-core`** — o caminho quente em Rust: ring buffer lock-free por thread, relógio lógico
-  global, mapa de códigos e o writer, exposto ao Python como `flight._core`.
-- **`flight` (Python)** — `install()`/`uninstall()` ligando o `sys.monitoring`, um `excepthook` que
-  gera o `.flight` no crash, `capture()` para erros tratados, e a CLI `python -m flight run|inspect`.
+- **`flight-reader`** — parser tolerante (índice do footer + scan linear; blocos desconhecidos como
+  bytes crus; degrada para `partial`) com API de consulta: exceção, frames, grafo de objetos e **aliasing**.
+- **`flight-core`** — o caminho quente em Rust: ring buffer lock-free, relógio lógico, writer, `flight._core`.
+- **`flight` (Python)** — `install()`/`uninstall()`, `excepthook` que grava a caixa-preta do crash,
+  `capture()`, e a CLI `python -m flight run|inspect`.
 
-Um `.flight` da Fase 0 contém o **ambiente** (META) e o **ring de eventos** — os últimos milhares de
-eventos PY_START / LINE / RETURN / RAISE de todas as threads, mesclados por tempo lógico. Isso já
-responde *"que caminho o código percorreu nos instantes antes de morrer?"*.
+Um `.flight` da Fase 1 contém, além do **ambiente** (META) e do **ring de eventos**: a **cadeia de
+exceções**, todos os **frames** (do crash para fora) com seus **locais**, o **grafo de objetos**
+serializado (preserva identidade/aliasing, seguro contra ciclos, com limites e orçamento de tempo/bytes)
+e a **fonte** de cada arquivo. Duas propriedades de primeira classe: **scrubbing** (P5) redige valores
+sensíveis por nome antes de gravar, e o gravador **nunca derruba** o programa (P1). **Adaptadores**
+descrevem objetos grandes (numpy/pandas) por forma/dtype/preview.
 
-**Próximo:** a Fase 1 adiciona frames, locals e o grafo de objetos serializado; a Fase 1.5, um viewer TUI.
+**Próximo:** Fase 1.5 — um viewer TUI (Textual) sobre o `flight-reader`.
 
 ## Instalar & compilar
 

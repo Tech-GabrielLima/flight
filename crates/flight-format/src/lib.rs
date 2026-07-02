@@ -23,12 +23,14 @@
 //! cheaply. Block payloads are msgpack compressed with zstd (level 3).
 
 mod block;
+mod crash;
 mod error;
 mod event;
 mod header;
 mod writer;
 
 pub use block::{BlockType, IndexEntry, MetaBlock, RingPayload};
+pub use crash::{ExceptionLink, FrameInfo, ObjectItem, ObjectNode, SourceFile};
 pub use error::FormatError;
 pub use event::{CodeInfo, Event, EventKind};
 pub use header::HeaderMeta;

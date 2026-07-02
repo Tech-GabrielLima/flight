@@ -26,16 +26,21 @@ a TUI viewer in Phase 1.5, time-travel in Phase 2).
 
 from __future__ import annotations
 
+from ._adapters import Adapted, adapter
 from ._config import Config
 from ._install import dump, install, is_installed, uninstall
-from ._read import Flight, read
+from ._read import Crash, Flight, Frame, read
 
 __version__ = "0.0.1"
 
 __all__ = [
+    "Adapted",
     "Config",
+    "Crash",
     "Flight",
+    "Frame",
     "__version__",
+    "adapter",
     "capture",
     "dump",
     "install",
@@ -54,16 +59,24 @@ def stats() -> dict:
 
 
 def capture(path=None):
-    """Write a `.flight` of the recording *now*, without waiting for a crash.
+    """Write a `.flight` *now*, without waiting for an uncaught exception.
 
-    Handy inside an ``except`` block for suspicious-but-handled errors::
+    If called while handling an exception, it captures the **full** black box
+    for it — frames, locals, object graph, source, exception chain — exactly as
+    the crash path would. Otherwise it writes a ring-only snapshot of the
+    current execution. Handy inside an ``except`` block::
 
         try:
             process(request)
         except Exception:
-            flight.capture()
+            flight.capture()   # full crash detail for this handled error
             raise
 
     Returns the path written, or ``None`` on failure.
     """
-    return dump(path)
+    from ._capture import capture as _capture
+    from ._config import Config
+    from ._install import _active
+
+    config = _active.config if _active is not None else Config()
+    return _capture(config, path)

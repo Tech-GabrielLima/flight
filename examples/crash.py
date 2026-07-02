@@ -1,4 +1,22 @@
-"""A small program that dies, to demonstrate flight."""
+"""A small program that dies, to demonstrate flight.
+
+Run it directly — it installs the recorder itself:
+
+    python examples/crash.py
+
+On the uncaught ZeroDivisionError, flight writes a .flight file capturing every
+frame, its locals, the object graph and the source. Then:
+
+    python -m flight inspect flight-*.flight
+
+You can also record a script you don't want to edit, without the `import flight`:
+
+    python -m flight run some_script.py
+"""
+
+import flight
+
+flight.install()
 
 
 def compute_average(numbers):
@@ -20,7 +38,7 @@ def main():
     datasets = {
         "morning": [10, 20, 30],
         "afternoon": [5, 15],
-        "evening": [],  # oops: empty -> ZeroDivisionError
+        "evening": [],  # oops: empty -> ZeroDivisionError in compute_average
     }
     print(summarize(datasets))
 

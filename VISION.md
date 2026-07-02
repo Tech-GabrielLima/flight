@@ -85,12 +85,12 @@ vêm redigidos por default.
 | Fase | Nome | Entrega central | Status |
 |------|------|-----------------|--------|
 | 0 | Fundação | Repo, CI, formato `.flight` v1, esqueleto Rust+Python funcionando | ✅ **concluída** |
-| 1 | Caixa-preta | Captura automática de exceções: todos os frames + locals + ring buffer | próxima |
-| 1.5 | Viewer | TUI navegável: frames → locals → grafo de objetos → código com valores inline | — |
+| 1 | Caixa-preta | Captura automática de exceções: todos os frames + locals + grafo de objetos + fontes | ✅ **concluída** |
+| 1.5 | Viewer | TUI navegável: frames → locals → grafo de objetos → código com valores inline | próxima |
 | 2 | Time-travel de escopo | `with flight.record():` grava tudo; histórico por variável; timeline | — |
 | 3 | Re-execução | Gravação de fontes de não-determinismo; replay determinístico | pesquisa |
 
-### 5.1 Definição de "pronto" da Fase 0 (o que esta entrega cumpre)
+### 5.1 Definição de "pronto" da Fase 0
 
 - Workspace Rust (`flight-format`, `flight-reader`, `flight-core`) + pacote Python `flight`, compilando
   via maturin.
@@ -98,13 +98,25 @@ vêm redigidos por default.
   e **tolerância a truncamento testada byte a byte**.
 - Ring buffer lock-free por thread + relógio lógico, alimentado por `sys.monitoring`, **contando e
   ordenando eventos** entre threads.
-- `install()`/`uninstall()`, `excepthook` que gera `.flight` no crash, `capture()` manual, e CLI
-  `python -m flight run|inspect`.
+- `install()`/`uninstall()`, `excepthook`, `capture()` manual, e CLI `python -m flight run|inspect`.
 - Benchmark de overhead baseline (`scripts/bench.py`) — número honesto, não promessa.
-- 30 testes Rust + 15 testes Python, todos verdes.
 
-O que **não** está na Fase 0 (é Fase 1): captura de frames, locals e grafo de objetos; o `.flight` da
-Fase 0 carrega META + EVENT_RING, que já responde "que caminho o código percorreu antes de morrer".
+### 5.2 Definição de "pronto" da Fase 1 (o que esta entrega cumpre)
+
+- No crash (excepthook) ou via `capture()`, o `.flight` passa a carregar, além de META + EVENT_RING:
+  **EXCEPTION** (cadeia `__cause__`/`__context__`), **FRAME** (todos os frames, do crash para fora,
+  com os locals), **OBJECT** (grafo de objetos serializado) e **SOURCE** (fonte de cada arquivo).
+- **Serializador de grafo** com: preservação de **identidade/aliasing** (o MESMO objeto em dois frames
+  = um nó só), segurança contra **ciclos**, limites por contêiner/string, limite de **profundidade**,
+  **orçamento global** de tempo (250 ms) e bytes (20 MB), `safe_repr` à prova de `__repr__` hostil, e
+  tipos opacos (módulos/classes/funções) como folhas.
+- **Scrubbing (P5)** de valores sensíveis por nome (chaves de dict, atributos e **nomes de locais**).
+- **Adaptadores** plugáveis (numpy/pandas) resolvidos por qualname, sem virar dependência.
+- CLI `inspect` enriquecido: exceção, frames com locais renderizados e marcação de aliasing (`↔`).
+- Reader com API de consulta: `exceptions()`, `frames()`, `objects()`, `object_map()`, `aliases()`.
+- 34 testes Rust + 36 testes Python, todos verdes.
+
+O que **não** está na Fase 1 (é 1.5): o viewer TUI navegável. Os dados já estão todos no `.flight`.
 
 ---
 

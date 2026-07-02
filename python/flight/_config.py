@@ -58,6 +58,23 @@ class Config:
     #: granularity, which is cheap and already answers "which functions ran,
     #: and how did the exception unwind?".
     record_lines: bool = False
+
+    # -- Phase-1 crash capture (frames + locals + object graph) ------------
+    #: Global time budget for serializing the whole crash (P2). If exceeded,
+    #: the file is written `partial`, crash-nearest frames prioritized.
+    capture_deadline_ms: int = 250
+    #: Global byte budget for the object graph.
+    capture_max_bytes: int = 20 * 1024 * 1024
+    #: Truncate strings/bytes longer than this (real length is still recorded).
+    max_str: int = 10 * 1024
+    #: Max items serialized per container (real length is still recorded).
+    max_container: int = 200
+    #: Max depth of the object graph from a frame local.
+    max_depth: int = 6
+    #: Max length of a `safe_repr` rendering.
+    repr_limit: int = 200
+    #: Extra scrubbing patterns, added to the built-in sensitive-name set (P5).
+    scrub_patterns: tuple[str, ...] = ()
     #: Directory prefixes to exclude from recording.
     deny_prefixes: tuple[str, ...] = field(default_factory=_stdlib_and_site_prefixes)
     #: Extra path substrings to always record even if under a denied prefix.
