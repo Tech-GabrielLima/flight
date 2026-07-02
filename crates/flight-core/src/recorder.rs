@@ -207,6 +207,11 @@ impl Recorder {
 
     // -- introspection / drain ---------------------------------------------
 
+    /// Current generation (bumped by `reset()`) — invalidates per-thread caches.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
+    }
+
     pub fn total_events(&self) -> u64 {
         self.clock.load(Ordering::Relaxed)
     }

@@ -60,9 +60,18 @@ caminho quente. Todos os números de overhead pressupõem release.
 
 O ring é **lock-free por thread**: um cache thread-local guarda o ponteiro do ring da thread (validado
 por uma *generation* que o `reset()` incrementa), então o push é um `fetch_add` atômico + um store de 24
-bytes, sem mutex. O filtro interessante/deny e o mapa de códigos usam um hasher de inteiros rápido
-(mixing de Fibonacci) em vez do SipHash padrão. Todo entry point Rust usa `catch_unwind` e **nunca**
-propaga um pânico para o CPython (P1).
+bytes, sem mutex. A decisão interessante/deny por code id também é cacheada **sem lock** num cache
+**direto thread-local** (indexado pelo ponteiro do código; validado por generation) — num loop quente o
+acerto é ~100% e o caminho quente nunca toca o mutex; o mapa global (com hasher de inteiros rápido, não
+SipHash) é a fonte da verdade no miss. Todo entry point Rust usa `catch_unwind` e **nunca** propaga um
+pânico para o CPython (P1).
+
+**Número final (release):** ~65 ns/evento gravado (dispatch ~40 + push lock-free + filtro cacheado
+~25), ~2.5× em código patológico que chama uma função gravada por iteração, ~1.0× no caso comum.
+**Por que não chega a unidades de ns:** os ~40 ns são o próprio `sys.monitoring` despachando para um
+callback que **não faz nada** (medido) — piso do PEP 669. Nem a injeção de bytecode resolve: ela ainda
+emite um `CALL` Python por evento (dezenas de ns). Nenhum mecanismo por-evento do CPython chega a
+dígitos únicos; a ação por-evento mais barata do interpretador já custa ~30–50 ns.
 
 ### 0.3 — O pipeline de escrita: ring na frente, disco atrás  **[Fase 0 ✅]**
 

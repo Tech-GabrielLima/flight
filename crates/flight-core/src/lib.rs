@@ -109,22 +109,62 @@ fn keep_or_disable(py: Python<'_>, disable: bool) -> Py<PyAny> {
     py.None()
 }
 
+// A lock-free, thread-local direct-mapped cache of the interesting decision, so
+// the per-event hot path never touches the recorder's mutex. A hot loop calls a
+// handful of code objects, so the cache hits ~100%; a miss (or a stale entry
+// after `reset()` bumps the generation) falls back to the recorder, which stays
+// the source of truth. Thread-local ⇒ no sharing ⇒ correct under free-threading.
+const CACHE_SIZE: usize = 512;
+
+#[derive(Clone, Copy)]
+struct CacheSlot {
+    code_id: u64,
+    generation: u64,
+    /// 1 = interesting, 2 = not; 0 = empty.
+    state: u8,
+}
+
+thread_local! {
+    static INTEREST: std::cell::UnsafeCell<[CacheSlot; CACHE_SIZE]> =
+        const { std::cell::UnsafeCell::new([CacheSlot { code_id: 0, generation: 0, state: 0 }; CACHE_SIZE]) };
+}
+
 /// Decide whether `code` is interesting (cached per code id), registering it on
 /// first sight. Returns its `code_id` if interesting, or `None` to DISABLE.
 #[inline]
 fn interesting_code_id(code: &Bound<'_, PyAny>) -> Option<u64> {
     let code_id = code.as_ptr() as u64;
     let rec = recorder();
-    match rec.interesting_cached(code_id) {
-        Some(true) => Some(code_id),
-        Some(false) => None,
+    let generation = rec.generation();
+    // Pointers are 16-byte aligned, so shift the low zero bits out of the index.
+    let idx = ((code_id >> 4) as usize) & (CACHE_SIZE - 1);
+
+    // Fast path: a lock-free thread-local hit.
+    let cached = INTEREST.with(|c| {
+        // SAFETY: thread-local, so this thread is the only accessor.
+        let slot = unsafe { (*c.get())[idx] };
+        if slot.code_id == code_id && slot.generation == generation {
+            slot.state
+        } else {
+            0
+        }
+    });
+    match cached {
+        1 => return Some(code_id),
+        2 => return None,
+        _ => {}
+    }
+
+    let interesting = match rec.interesting_cached(code_id) {
+        Some(v) => v,
         None => {
             let file = code
                 .getattr("co_filename")
                 .ok()
                 .and_then(|f| f.extract::<String>().ok())
                 .unwrap_or_default();
-            if rec.decide_interesting(code_id, &file) {
+            let v = rec.decide_interesting(code_id, &file);
+            if v {
                 let qual = code
                     .getattr("co_qualname")
                     .ok()
@@ -136,11 +176,25 @@ fn interesting_code_id(code: &Bound<'_, PyAny>) -> Option<u64> {
                     .and_then(|q| q.extract::<u32>().ok())
                     .unwrap_or(0);
                 rec.register_code(code_id, &file, &qual, first);
-                Some(code_id)
-            } else {
-                None
             }
+            v
         }
+    };
+    // Fill the thread-local slot for next time.
+    INTEREST.with(|c| {
+        // SAFETY: thread-local, single accessor.
+        unsafe {
+            (*c.get())[idx] = CacheSlot {
+                code_id,
+                generation,
+                state: if interesting { 1 } else { 2 },
+            };
+        }
+    });
+    if interesting {
+        Some(code_id)
+    } else {
+        None
     }
 }
 

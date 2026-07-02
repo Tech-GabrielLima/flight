@@ -272,28 +272,32 @@ and by default at **call/return/exception** granularity — enough to answer "wh
 did the exception unwind?". Per-line detail (`record_lines=True`) is opt-in.
 
 The recording callbacks are **native Rust functions registered directly with `sys.monitoring`** — the
-interpreter calls straight into Rust, with no Python callback frame, no second FFI hop, and a
-**lock-free per-thread ring buffer** (a `fetch_add` and a 24-byte store) on the hot path.
+interpreter calls straight into Rust, with no Python callback frame and no second FFI hop. On the hot
+path there is **no lock**: a **lock-free per-thread ring buffer** (a `fetch_add` and a 24-byte store)
+and a **thread-local direct-mapped cache** of the "is this code interesting?" decision, so a hot loop
+never touches a mutex.
 
 Measured (`maturin develop --release`, then `python scripts/bench.py`, honest per-run cost):
 
 | What | Cost / event |
 |---|---:|
-| `sys.monitoring` dispatch to a do-nothing callback (the floor) | **~37 ns** |
+| `sys.monitoring` dispatch to a do-nothing callback (the floor) | **~40 ns** |
 | dispatch + lock-free ring push (no filter) | ~55 ns |
-| **full recorded event** (filter + register + push) | **~85 ns** |
+| **full recorded event** (filter + register + push) | **~65 ns** |
 | — for comparison, the old Python-callback + FFI path (debug) | ~350–500 ns |
 
-So a recorded event costs **~85 ns**, ~2.7x slowdown on pathological code that calls a recorded
+So a recorded event costs **~65 ns**, ~2.5x slowdown on pathological code that calls a recorded
 function every iteration, and **~1.0x** when your recorded code isn't the innermost hot loop (the
-common case). That is roughly **5–6× faster** than the previous Python-callback path, and within ~2× of
-the hard floor.
+common case). That is roughly **7–8× faster** than the previous Python-callback path, and within ~1.5×
+of the hard floor.
 
-**Why not 5 ns?** Because ~37 ns of every event is `sys.monitoring` *itself* — that's the cost of the
-interpreter dispatching to a callback that does *nothing*, measured. You cannot get below it with
-PEP 669; the only way lower is to stop using a per-event callback at all (inject instrumentation into
-the bytecode, à la Phase-2 option A), which trades this floor for per-release fragility. flight sits
-just above the floor: ~37 ns you can't remove, ~48 ns of actual work (filter + ring).
+**Why not single-digit nanoseconds?** Because ~40 ns of *every* event is `sys.monitoring` itself —
+measured, the cost of the interpreter dispatching to a callback that does **nothing**. No PEP 669 tool
+can go below it. And the only sub-callback mechanism — injecting instrumentation into the bytecode —
+still emits a Python-level `CALL` per event (tens of ns) and trades this floor for per-CPython-release
+fragility. Single-digit ns per *recorded event* is not reachable in CPython by any per-event mechanism;
+the cheapest per-event action the interpreter offers is already ~30–50 ns. flight sits just above that
+floor: ~40 ns you cannot remove, ~25 ns of actual work (lock-free ring + lock-free filter cache).
 
 > **Build note:** `maturin develop` compiles Rust in **debug** mode (~10× slower — fine for iterating).
 > Use `maturin develop --release` (and release wheels) for the numbers above.
