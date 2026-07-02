@@ -86,8 +86,8 @@ vêm redigidos por default.
 |------|------|-----------------|--------|
 | 0 | Fundação | Repo, CI, formato `.flight` v1, esqueleto Rust+Python funcionando | ✅ **concluída** |
 | 1 | Caixa-preta | Captura automática de exceções: todos os frames + locals + grafo de objetos + fontes | ✅ **concluída** |
-| 1.5 | Viewer | TUI navegável: frames → locals → grafo de objetos → código com valores inline | próxima |
-| 2 | Time-travel de escopo | `with flight.record():` grava tudo; histórico por variável; timeline | — |
+| 1.5 | Viewer | TUI navegável: frames → locals → grafo de objetos → código com valores inline | — |
+| 2 | Time-travel de escopo | `with flight.record():` grava escritas de estado; histórico por variável; "quem mutou" | ✅ **concluída** |
 | 3 | Re-execução | Gravação de fontes de não-determinismo; replay determinístico | pesquisa |
 
 ### 5.1 Definição de "pronto" da Fase 0
@@ -117,6 +117,25 @@ vêm redigidos por default.
 - 34 testes Rust + 36 testes Python, todos verdes.
 
 O que **não** está na Fase 1 (é 1.5): o viewer TUI navegável. Os dados já estão todos no `.flight`.
+
+### 5.3 Definição de "pronto" da Fase 2 (o que esta entrega cumpre)
+
+- `with flight.record():` — escopo explícito que grava **escritas de estado** num bloco MUTATION e
+  fecha um `.flight` limpo na saída (mesmo se uma exceção sair do bloco).
+- Captura **robusta e à prova de versão**, sem cirurgia de bytecode: por evento LINE dentro do escopo,
+  (a) **diff dos locais** do frame → rebind de variáveis, e (b) **diff de snapshot** de objetos sob
+  `watch(obj)` → escritas em contêineres/atributos, sem substituir o objeto (não quebra `type()`).
+- **Timeline / time-travel** sobre o log: `Recording.history(nome)` (evolução de uma variável),
+  `who_mutated(nome)` ("quem mutou este dict"), `state_at(seq)` (reconstruir os locais num instante —
+  event sourcing). CLI: `flight timeline [--var|--who]`.
+- **Scrubbing (P5)** aplicado a nomes de locais e chaves/atributos observados; **opt-in e delimitado**
+  (só paga custo em torno do código investigado, P2); cap de mutações para não crescer sem limite.
+- 36 testes Rust + 46 testes Python, todos verdes.
+
+Limitação honesta: a captura é em granularidade de linha — o valor gravado é exato, e a linha atribuída
+é aquela onde a mudança foi *observada* (o diff é "uma linha depois" da escrita). Granularidade por
+instrução via instrumentação nativa de bytecode é o passo futuro (TECHNICAL.md §3.2, opção A). O que
+**não** está na Fase 2 (é Fase 3): replay determinístico.
 
 ---
 

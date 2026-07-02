@@ -69,9 +69,10 @@ Three bets underpin the project (see [VISION.md](VISION.md)):
 **It is** a scoped, post-mortem recorder with a first-class viewer, evolving toward time-travel
 debugging. **It is not** an APM, a live debugger (that's `pdb`), or a profiler.
 
-## Status — Phase 1 (the black box) ✅
+## Status — Phase 2 (time-travel of scope) ✅
 
-Phases 0 (foundation) and 1 (the full black box) are complete, end to end and fully tested.
+Phases 0 (foundation), 1 (the full black box) and 2 (scoped time-travel) are complete, end to end and
+fully tested.
 
 **The engine (Rust):**
 - **`flight-format`** — the versioned, append-only, truncation-tolerant `.flight` format: header,
@@ -101,8 +102,49 @@ Two safety properties are first-class: **scrubbing** (P5) redacts values whose n
 recorder can never crash the program it is recording (P1). Type **adapters** describe big objects
 (numpy arrays, pandas frames) by shape/dtype/preview instead of dumping their contents.
 
+**Phase 2 — time-travel of scope.** Inside a `with flight.record():` block, every state write is
+recorded as a MUTATION, so afterwards you can replay the program's memory:
+
+```python
+import flight
+
+with flight.record() as rec:
+    cache = {}
+    rec.watch(cache, name="cache")   # also track writes into this container
+    running = 0
+    for it in [5, 3, 8]:
+        running = running + it       # a local rebind
+        cache[it] = running          # a container write
+```
+
+```console
+$ python -m flight timeline --var running flight-scope-*.flight
+history of local 'running' (4 writes):
+  #3     tt.py:8     local  running = 0
+  #5     tt.py:10    local  running = 5
+  #8     tt.py:10    local  running = 8
+  #11    tt.py:10    local  running = 16       # ← how it evolved, step by step
+
+$ python -m flight timeline --who cache flight-scope-*.flight
+writes to 'cache' (3 writes):
+  #6     tt.py:8     item   cache[5] = 5
+  #9     tt.py:8     item   cache[3] = 8
+  #12    tt.py:8     item   cache[8] = 16      # ← who wrote what, and when
+```
+
+From Python: `flight.read(path).recording()` gives a `Recording` with `history(name)`,
+`who_mutated(name)`, and `state_at(seq)` (reconstruct the locals at any step — event sourcing).
+
+**How writes are captured (honest engineering).** No bytecode surgery: inside the scope, each `LINE`
+event diffs the frame's locals (→ local rebinds) and diffs each `watch()`-ed object's snapshot (→
+container/attribute writes, without ever subclassing, so `type(x) is dict` still holds). It is
+line-granular — the *value* is exact, the attributed line is where the change was first observed — and
+robust across CPython versions. Per-instruction capture via native bytecode instrumentation is a
+documented future step ([TECHNICAL.md](TECHNICAL.md) §3.2). Recording is opt-in and scope-delimited,
+so its cost is only paid around the code you're investigating (P2).
+
 **Next:** Phase 1.5 — a Textual TUI viewer over `flight-reader` (frames → locals → object graph →
-source with inline values).
+source with inline values, and a mutation timeline).
 
 ## Install & build
 
@@ -197,8 +239,9 @@ crates/
   flight-reader/   tolerant parser + query surface (exceptions, frames, object graph, aliases)
   flight-core/     ring buffer, recorder, PyO3 bindings (module flight._core)
 python/flight/
-  _install.py      sys.monitoring wiring + exception hooks
+  _install.py      sys.monitoring wiring + exception hooks + scope stack
   _capture.py      the crash-capture algorithm (frames, locals, sources, chain)
+  _record.py       the `with flight.record()` scope + watch() (Phase 2)
   _serialize.py    the object-graph serializer (identity, budget, limits)
   _scrub.py        sensitive-value redaction (P5)
   _adapters.py     type adapters (numpy/pandas/…)

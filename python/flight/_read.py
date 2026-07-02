@@ -70,6 +70,67 @@ class Crash:
 
 
 @dataclass
+class Mutation:
+    """One recorded state write from a `with flight.record()` scope."""
+
+    seq: int
+    kind: str  # "local" | "item" | "attr"
+    name: str
+    key: Optional[str]
+    #: (value_kind, value_repr, value_type, value_length)
+    value: tuple[str, Optional[str], Optional[str], Optional[int]]
+    file: str
+    qualname: str
+    line: int
+    frame: int
+
+    @property
+    def value_repr(self) -> str:
+        kind, rep, _type, length = self.value
+        if rep is not None:
+            return rep
+        return f"{kind}[{length}]" if length is not None else kind
+
+
+class Recording:
+    """The mutation timeline of a scope `.flight` — the queries that make the
+    log useful: per-variable history, state-at-a-point, and who-mutated-what."""
+
+    def __init__(self, mutations: list[Mutation]):
+        self.mutations = mutations
+
+    def __len__(self) -> int:
+        return len(self.mutations)
+
+    def history(self, name: str) -> list[Mutation]:
+        """Every write to local variable `name`, in order — how it evolved."""
+        return [m for m in self.mutations if m.kind == "local" and m.name == name]
+
+    def who_mutated(self, name: str) -> list[Mutation]:
+        """Every item/attr write to the container/object labelled `name`."""
+        return [m for m in self.mutations if m.kind in ("item", "attr") and m.name == name]
+
+    def state_at(self, seq: int) -> dict[str, str]:
+        """Reconstruct the locals visible at step `seq`: for each name, the last
+        value written at or before `seq` (event sourcing — VISION.md §10)."""
+        state: dict[str, str] = {}
+        for m in self.mutations:
+            if m.seq > seq:
+                break
+            if m.kind == "local":
+                state[m.name] = m.value_repr
+        return state
+
+    def names(self) -> list[str]:
+        """Distinct local variable names that were written."""
+        seen = {}
+        for m in self.mutations:
+            if m.kind == "local":
+                seen[m.name] = None
+        return list(seen)
+
+
+@dataclass
 class Flight:
     """A parsed `.flight` file summary."""
 
@@ -88,6 +149,7 @@ class Flight:
     exceptions: list[tuple[str, str, str]] = field(default_factory=list)
     frame_count: int = 0
     object_count: int = 0
+    mutation_count: int = 0
 
     @property
     def is_complete(self) -> bool:
@@ -96,6 +158,29 @@ class Flight:
     @property
     def has_crash(self) -> bool:
         return self.frame_count > 0 or bool(self.exceptions)
+
+    @property
+    def has_mutations(self) -> bool:
+        return self.mutation_count > 0
+
+    def recording(self) -> Recording:
+        """Load the MUTATION timeline (Phase-2 scope recording)."""
+        rows = _core.read_mutations(str(self.path))
+        muts = [
+            Mutation(
+                seq=r[0],
+                kind=r[1],
+                name=r[2],
+                key=r[3],
+                value=tuple(r[4]),
+                file=r[5],
+                qualname=r[6],
+                line=r[7],
+                frame=r[8],
+            )
+            for r in rows
+        ]
+        return Recording(muts)
 
     def crash(self) -> Crash:
         """Load the full crash detail (frames, locals, object graph, source)."""
@@ -140,4 +225,5 @@ def read(path) -> Flight:
         exceptions=[tuple(e) for e in d.get("exceptions", [])],
         frame_count=d.get("frame_count", 0),
         object_count=d.get("object_count", 0),
+        mutation_count=d.get("mutation_count", 0),
     )

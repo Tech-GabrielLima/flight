@@ -75,6 +75,11 @@ class Config:
     repr_limit: int = 200
     #: Extra scrubbing patterns, added to the built-in sensitive-name set (P5).
     scrub_patterns: tuple[str, ...] = ()
+
+    # -- Phase-2 scope recording (`with flight.record()`) ------------------
+    #: Cap on the number of mutations recorded in one scope, so a hot loop
+    #: can't grow the log without bound; beyond it the recording is truncated.
+    capture_max_mutations: int = 200_000
     #: Directory prefixes to exclude from recording.
     deny_prefixes: tuple[str, ...] = field(default_factory=_stdlib_and_site_prefixes)
     #: Extra path substrings to always record even if under a denied prefix.
@@ -96,3 +101,6 @@ class Config:
 
     def crash_path(self, pid: int, when_ms: int) -> Path:
         return self.output_dir / f"flight-{pid}-{when_ms}.flight"
+
+    def scope_path(self, pid: int, when_ms: int) -> Path:
+        return self.output_dir / f"flight-scope-{pid}-{when_ms}.flight"

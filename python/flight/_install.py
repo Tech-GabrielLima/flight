@@ -41,6 +41,10 @@ class _Session:
         # event (P2). Filenames are interned per code object, so a dict keyed
         # on the filename string is a cheap, stable cache.
         self._interesting: dict[str, bool] = {}
+        # Phase-2 scope recording: a stack of active `with flight.record()`
+        # scopes per owning thread. LINE events are enabled while any scope is
+        # active (see _refresh_line_events).
+        self._scopes: dict[int, list] = {}
 
     def _wanted(self, filename: str) -> bool:
         cached = self._interesting.get(filename)
@@ -75,6 +79,11 @@ class _Session:
             # PY_START already registered interesting code; recording here is
             # kept to just the ring push to hold the per-line cost down.
             _core.record(_core.EVENT_LINE, id(code), line_number)
+            # Phase-2: feed the active scope on this thread, if any.
+            if self._scopes:
+                scope = self._current_scope()
+                if scope is not None:
+                    scope.capture_line(code, line_number, sys._getframe(1))
         except Exception:
             pass
         return None
@@ -152,18 +161,49 @@ class _Session:
         _mon.register_callback(TOOL_ID, ev.RAISE, self._on_raise)
         _mon.register_callback(TOOL_ID, ev.RERAISE, self._on_reraise)
         _mon.register_callback(TOOL_ID, ev.PY_UNWIND, self._on_unwind)
-        events = ev.PY_START | ev.PY_RETURN | ev.RAISE | ev.RERAISE | ev.PY_UNWIND
-        if self.config.record_lines:
-            _mon.register_callback(TOOL_ID, ev.LINE, self._on_line)
-            events |= ev.LINE
-        _mon.set_events(TOOL_ID, events)
+        # Always register the LINE callback (registration is free); only the
+        # event mask has a cost, and that is toggled by record_lines and by
+        # active scopes (see _refresh_line_events).
+        _mon.register_callback(TOOL_ID, ev.LINE, self._on_line)
+        self._installed = True
+        self._refresh_line_events()
 
         import threading
 
         sys.excepthook = self._excepthook
         self._prev_threading_hook = threading.excepthook
         threading.excepthook = self._threading_excepthook
-        self._installed = True
+
+    def _refresh_line_events(self):
+        """Set the monitored event mask: LINE is on when line-recording is
+        configured or any Phase-2 scope is active."""
+        if not self._installed:
+            return
+        ev = _mon.events
+        events = ev.PY_START | ev.PY_RETURN | ev.RAISE | ev.RERAISE | ev.PY_UNWIND
+        if self.config.record_lines or self._scopes:
+            events |= ev.LINE
+        _mon.set_events(TOOL_ID, events)
+
+    # -- Phase-2 scope stack ------------------------------------------------
+
+    def _enter_scope(self, scope):
+        self._scopes.setdefault(scope.owner, []).append(scope)
+        self._refresh_line_events()  # ensure LINE is on for the recording
+
+    def _exit_scope(self, scope):
+        stack = self._scopes.get(scope.owner)
+        if stack and scope in stack:
+            stack.remove(scope)
+            if not stack:
+                del self._scopes[scope.owner]
+        self._refresh_line_events()  # turn LINE back off if nothing needs it
+
+    def _current_scope(self):
+        import threading
+
+        stack = self._scopes.get(threading.get_ident())
+        return stack[-1] if stack else None
 
     def uninstall(self):
         if not self._installed:

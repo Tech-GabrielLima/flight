@@ -6,7 +6,8 @@ use std::collections::HashMap;
 
 use flight_format::{
     BlockType, CodeInfo, Event, EventKind, ExceptionLink, FlightWriter, FrameInfo, HeaderMeta,
-    MetaBlock, ObjectItem, ObjectNode, RingPayload, SourceFile, TRAILER_MAGIC,
+    MetaBlock, Mutation, MutationValue, ObjectItem, ObjectNode, RingPayload, SourceFile,
+    TRAILER_MAGIC,
 };
 use flight_reader::FlightFile;
 
@@ -325,6 +326,64 @@ fn crash_blocks_roundtrip_and_aliasing_resolves() {
 }
 
 #[test]
+fn mutation_block_roundtrips() {
+    let mut buf = Vec::new();
+    let mut w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
+    w.write_block_named(BlockType::Meta, &sample_meta())
+        .unwrap();
+    let muts = vec![
+        Mutation {
+            seq: 0,
+            kind: "local".into(),
+            name: "total".into(),
+            key: None,
+            value: MutationValue {
+                kind: "int".into(),
+                repr: Some("0".into()),
+                type_name: None,
+                length: None,
+            },
+            file: "app.py".into(),
+            qualname: "run".into(),
+            line: 5,
+            frame: 1,
+        },
+        Mutation {
+            seq: 3,
+            kind: "local".into(),
+            name: "total".into(),
+            key: None,
+            value: MutationValue {
+                kind: "int".into(),
+                repr: Some("45".into()),
+                type_name: None,
+                length: None,
+            },
+            file: "app.py".into(),
+            qualname: "run".into(),
+            line: 5,
+            frame: 1,
+        },
+    ];
+    w.write_block(BlockType::Mutation, &muts).unwrap();
+    w.write_block(BlockType::EventRing, &sample_ring(3))
+        .unwrap();
+    w.finish().unwrap();
+
+    let f = FlightFile::from_bytes(&buf).unwrap();
+    assert!(!f.partial);
+    let read = f.mutations();
+    assert_eq!(read, muts);
+    // history of "total": two writes, values 0 then 45.
+    let history: Vec<&str> = read
+        .iter()
+        .filter(|m| m.kind == "local" && m.name == "total")
+        .map(|m| m.value.repr.as_deref().unwrap_or(""))
+        .collect();
+    assert_eq!(history, vec!["0", "45"]);
+}
+
+#[test]
 fn crash_accessors_are_empty_on_a_ring_only_file() {
     // A Phase-0 file (META + EVENT_RING) has no crash blocks; accessors must
     // return empty, not error.
@@ -334,5 +393,6 @@ fn crash_accessors_are_empty_on_a_ring_only_file() {
     assert!(f.frames().is_empty());
     assert!(f.sources().is_empty());
     assert!(f.objects().is_empty());
+    assert!(f.mutations().is_empty());
     assert!(f.event_ring().is_some());
 }

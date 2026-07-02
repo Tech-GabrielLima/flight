@@ -29,7 +29,8 @@ from __future__ import annotations
 from ._adapters import Adapted, adapter
 from ._config import Config
 from ._install import dump, install, is_installed, uninstall
-from ._read import Crash, Flight, Frame, read
+from ._read import Crash, Flight, Frame, Mutation, Recording, read
+from ._record import record, watch
 
 __version__ = "0.0.1"
 
@@ -39,6 +40,8 @@ __all__ = [
     "Crash",
     "Flight",
     "Frame",
+    "Mutation",
+    "Recording",
     "__version__",
     "adapter",
     "capture",
@@ -46,8 +49,10 @@ __all__ = [
     "install",
     "is_installed",
     "read",
+    "record",
     "stats",
     "uninstall",
+    "watch",
 ]
 
 

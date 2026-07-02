@@ -19,7 +19,7 @@ use std::path::Path;
 use std::collections::HashMap;
 
 use flight_format::{
-    BlockType, ExceptionLink, FormatError, FrameInfo, HeaderMeta, IndexEntry, MetaBlock,
+    BlockType, ExceptionLink, FormatError, FrameInfo, HeaderMeta, IndexEntry, MetaBlock, Mutation,
     ObjectNode, RingPayload, SourceFile, BLOCK_HEADER_LEN, FORMAT_VERSION, HEADER_FIXED_LEN, MAGIC,
     TRAILER_LEN, TRAILER_MAGIC,
 };
@@ -121,6 +121,12 @@ impl FlightFile {
     /// The object graph (OBJECT block) as a flat list of nodes.
     pub fn objects(&self) -> Vec<ObjectNode> {
         self.first_payload(BlockType::Object).unwrap_or_default()
+    }
+
+    /// The recorded state writes (MUTATION block), in `seq` order — the
+    /// event-sourcing log of a `with flight.record()` scope (Phase 2).
+    pub fn mutations(&self) -> Vec<Mutation> {
+        self.first_payload(BlockType::Mutation).unwrap_or_default()
     }
 
     /// The object graph indexed by node id, for random access / expansion.

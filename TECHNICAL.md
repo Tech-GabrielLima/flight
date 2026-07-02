@@ -140,14 +140,31 @@ consulta do `flight-reader` (`frames()`, `locals(ix)`, `object(id)`, `aliases(id
 índice invertido `obj_id → aparições`. Valores inline no código: tokeniza as linhas visíveis e anota os
 `Name`s presentes nos locals. Árvores com expansão lazy abrem `.flight` de 100 MB instantaneamente.
 
-## CAPÍTULO 3 — FASE 2: time-travel de escopo
+## CAPÍTULO 3 — FASE 2: time-travel de escopo  **[implementada]**
 
-Dentro de `with flight.record():`, grava-se **toda escrita de estado** (rebind de local, `STORE_ATTR`,
-`STORE_SUBSCR`) como eventos MUTATION. Estado(t) = checkpoint anterior + replay das mutações até t
-(event sourcing aplicado à memória). Três opções de captura de escritas: **(A)** reescrita de bytecode
-do escopo (espinha dorsal recomendada), **(B)** evento `INSTRUCTION` (fallback, ~20–50x), **(C)** proxies
-de contêiner (opt-in `flight.watch(obj)` para "quem, em qualquer lugar, mutou este objeto?"). A fronteira
-C é tratada por checksum + evento `CALL`.
+Dentro de `with flight.record():`, grava-se **toda escrita de estado** como eventos MUTATION. Estado(t)
+= replay das mutações até t (event sourcing aplicado à memória). O guia pesa três opções: **(A)**
+reescrita de bytecode (exata, porém frágil por versão do CPython), **(B)** evento `INSTRUCTION` (robusto
+mas não lê o valor recém-empurrado na pilha), **(C)** proxies de contêiner (quebram `type(x) is dict`).
+
+**O que o Flight implementa (a escolha robusta e à prova de versão):** por evento **LINE** dentro do
+escopo (habilitado só enquanto há escopo ativo, via `set_events`), o `_record` faz **(1) diff dos
+locais** do frame contra a linha anterior → rebinds de variáveis, e **(2) diff de snapshot** de cada
+objeto sob `watch(obj)` → escritas em contêiner/atributo, *sem substituir o objeto* (não quebra
+`type()` — é a ideia da opção C, mas não-invasiva). Ambos em granularidade de linha: o **valor gravado
+é exato**; a **linha atribuída** é aquela onde a mudança foi *observada* (o diff é "uma linha depois" da
+escrita). Sem cirurgia de bytecode, funciona em qualquer 3.12+. Cada MUTATION guarda um render raso do
+valor (`kind/repr/type/length`) — o log é uma sequência de snapshots, exatamente o que um histórico por
+variável precisa, mantendo o log pequeno. Um cap (`capture_max_mutations`) impede crescimento sem limite.
+
+Consultas sobre o log (reader Python `Recording`): `history(nome)`, `who_mutated(nome)`, `state_at(seq)`.
+CLI: `flight timeline [--var|--who]`.
+
+**Passo futuro (opção A):** granularidade por instrução via instrumentação nativa de bytecode
+(injetar `flight_core.mut(...)` após cada `STORE_*`, com o valor duplicado da pilha) — captura exata,
+custo só onde instrumentado, ao preço de trabalho fino por versão do CPython. **Checkpoints (TIMELINE)**
+para navegação O(1) e a **fronteira C** (checksum + evento `CALL`) também ficam para depois: o log de
+mutações com valores completos já reconstrói qualquer instante por varredura (n é limitado ao escopo).
 
 ## CAPÍTULO 4 — FASE 3: replay determinístico
 
@@ -160,9 +177,8 @@ gerar `repro_bug.py` reconstruindo os argumentos do frame do crash a partir do g
 
 ```
 Fase 0  ✅  repo, maturin, ring contando eventos, round-trip do formato, benchmark baseline.
-Fase 1      excepthooks completos + captura de frames/locals + serializador de grafo + scrubbing.
-            🎯 MARCO: primeiro crash real virando .flight com locals navegáveis.
-Fase 1.5    Viewer Textual (frames→locals→código inline→ring) sobre flight-reader.
-Fase 2      protótipo A vs B de captura de escritas, MUTATION+checkpoints, timeline no viewer.
+Fase 1  ✅  excepthooks + captura de frames/locals + serializador de grafo + fontes + scrubbing.
+Fase 2  ✅  with flight.record(): MUTATION via LINE-diff + watch(); timeline (history/who/state_at).
+Fase 1.5    Viewer Textual (frames→locals→código inline→ring→timeline) sobre flight-reader.
 Fase 3      repro rasa → interposição de fontes → threads.
 ```

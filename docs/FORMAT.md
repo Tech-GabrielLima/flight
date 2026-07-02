@@ -66,7 +66,17 @@ reserved now, so the Phase-1.5 viewer can gain Phase-2 powers without a format r
 | 0x7F | EXT | — | extension space; unknown to a reader ⇒ skipped |
 
 A Phase-0 file contains **META** and **EVENT_RING**. A Phase-1 crash file adds **EXCEPTION**,
-**FRAME**, **OBJECT** and one **SOURCE** block per file involved.
+**FRAME**, **OBJECT** and one **SOURCE** block per file involved. A Phase-2 scope file
+(`with flight.record()`) contains **META**, **MUTATION**, **SOURCE** and **EVENT_RING**.
+
+### MUTATION payload
+
+A `Vec<Mutation>` in `seq` (logical) order — the event-sourcing log of a scope. Each record is
+`(seq, kind, name, key, value, file, qualname, line, frame)` where `kind` is `"local"` (a variable was
+(re)bound), `"item"` (a container key/index was written) or `"attr"` (an attribute was set), and
+`value` is a *shallow* rendering `(kind, repr, type_name, length)` — a snapshot of what the value was,
+not a deep graph, which is exactly what a per-variable history needs. Replaying the log answers "what
+was `x` at step t" and "who wrote this key"; `frame` disambiguates recursion.
 
 ### FRAME / OBJECT payloads
 

@@ -22,10 +22,11 @@ use std::sync::OnceLock;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
 
 use flight_format::{
-    EventKind, ExceptionLink, FrameInfo, MetaBlock, ObjectItem, ObjectNode, SourceFile,
+    EventKind, ExceptionLink, FrameInfo, MetaBlock, Mutation, MutationValue, ObjectItem,
+    ObjectNode, SourceFile,
 };
 use flight_reader::FlightFile;
 use recorder::Recorder;
@@ -45,6 +46,20 @@ type ObjectTuple = (
     Option<u64>,
     bool,
     Vec<(Option<String>, u64)>,
+);
+/// `(kind, repr, type_name, length)` — a shallow value rendering.
+type ValueTuple = (String, Option<String>, Option<String>, Option<u64>);
+/// `(seq, kind, name, key, value, file, qualname, line, frame)`.
+type MutationTuple = (
+    u64,
+    String,
+    String,
+    Option<String>,
+    ValueTuple,
+    String,
+    String,
+    u32,
+    u64,
 );
 
 /// The process-global recorder, built once on first use.
@@ -223,6 +238,65 @@ fn dump_crash(
     .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
+/// Write a Phase-2 scope recording (`with flight.record()`) to `path`.
+///
+/// The mutation log is built in Python (the LINE-diff capture) and passed as
+/// tuples; this lays down META + MUTATION + SOURCE + EVENT_RING and closes.
+#[pyfunction]
+#[pyo3(name = "dump_scope")]
+#[allow(clippy::too_many_arguments)]
+fn dump_scope(
+    path: PathBuf,
+    python_version: String,
+    platform: String,
+    argv: Vec<String>,
+    cwd: String,
+    flight_version: String,
+    mutations: Vec<MutationTuple>,
+    sources: Vec<SourceTuple>,
+) -> PyResult<()> {
+    let meta = MetaBlock {
+        python_version,
+        platform,
+        argv,
+        cwd,
+        flight_version,
+    };
+    let mutations: Vec<Mutation> = mutations
+        .into_iter()
+        .map(
+            |(seq, kind, name, key, (vkind, vrepr, vtype, vlen), file, qualname, line, frame)| {
+                Mutation {
+                    seq,
+                    kind,
+                    name,
+                    key,
+                    value: MutationValue {
+                        kind: vkind,
+                        repr: vrepr,
+                        type_name: vtype,
+                        length: vlen,
+                    },
+                    file,
+                    qualname,
+                    line,
+                    frame,
+                }
+            },
+        )
+        .collect();
+    let sources: Vec<SourceFile> = sources
+        .into_iter()
+        .map(|(filename, sha1, text)| SourceFile {
+            filename,
+            sha1,
+            text,
+        })
+        .collect();
+    dump::dump_scope(&path, meta, mutations, sources, recorder())
+        .map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
 /// Read a `.flight` file and return a summary dict (used by `flight inspect`).
 #[pyfunction]
 fn read_summary(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
@@ -245,6 +319,7 @@ fn read_summary(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
     d.set_item("exceptions", excs)?;
     d.set_item("frame_count", f.frames().len())?;
     d.set_item("object_count", f.objects().len())?;
+    d.set_item("mutation_count", f.mutations().len())?;
 
     if let Some(meta) = f.meta() {
         let m = PyDict::new(py);
@@ -331,6 +406,36 @@ fn read_crash(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
     Ok(d.into())
 }
 
+/// Read the MUTATION log from a `.flight` file as a list of tuples
+/// `(seq, kind, name, key, (vkind, vrepr, vtype, vlen), file, qualname, line, frame)`.
+#[pyfunction]
+fn read_mutations(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyList>> {
+    let f = FlightFile::open(&path).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let out: Vec<MutationTuple> = f
+        .mutations()
+        .into_iter()
+        .map(|m| {
+            (
+                m.seq,
+                m.kind,
+                m.name,
+                m.key,
+                (
+                    m.value.kind,
+                    m.value.repr,
+                    m.value.type_name,
+                    m.value.length,
+                ),
+                m.file,
+                m.qualname,
+                m.line,
+                m.frame,
+            )
+        })
+        .collect();
+    Ok(PyList::new(py, out)?.into())
+}
+
 /// The Python module `flight._core`.
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -341,8 +446,10 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(reset, m)?)?;
     m.add_function(wrap_pyfunction!(dump_file, m)?)?;
     m.add_function(wrap_pyfunction!(dump_crash, m)?)?;
+    m.add_function(wrap_pyfunction!(dump_scope, m)?)?;
     m.add_function(wrap_pyfunction!(read_summary, m)?)?;
     m.add_function(wrap_pyfunction!(read_crash, m)?)?;
+    m.add_function(wrap_pyfunction!(read_mutations, m)?)?;
 
     // Event kind discriminants, so Python names them instead of hard-coding.
     m.add("EVENT_PY_START", EventKind::PyStart as u8)?;

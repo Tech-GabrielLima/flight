@@ -27,6 +27,7 @@ mod crash;
 mod error;
 mod event;
 mod header;
+mod mutation;
 mod writer;
 
 pub use block::{BlockType, IndexEntry, MetaBlock, RingPayload};
@@ -34,6 +35,7 @@ pub use crash::{ExceptionLink, FrameInfo, ObjectItem, ObjectNode, SourceFile};
 pub use error::FormatError;
 pub use event::{CodeInfo, Event, EventKind};
 pub use header::HeaderMeta;
+pub use mutation::{Mutation, MutationValue};
 pub use writer::FlightWriter;
 
 /// File magic, first 4 bytes of every `.flight` file.

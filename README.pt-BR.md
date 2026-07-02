@@ -44,9 +44,10 @@ experiência de leitura; e o arquivo `.flight` compartilhável é o vetor viral.
 **É** um gravador post-mortem de escopo delimitado, com um viewer de primeira classe, evoluindo para
 time-travel debugging. **Não é** um APM, um debugger ao vivo (isso é o `pdb`) nem um profiler.
 
-## Status — Fase 1 (a caixa-preta) ✅
+## Status — Fase 2 (time-travel de escopo) ✅
 
-As Fases 0 (fundação) e 1 (a caixa-preta completa) estão concluídas, ponta a ponta e testadas.
+As Fases 0 (fundação), 1 (a caixa-preta completa) e 2 (time-travel de escopo) estão concluídas, ponta
+a ponta e testadas.
 
 - **`flight-format`** — o formato `.flight` versionado, append-only e tolerante a truncamento.
 - **`flight-reader`** — parser tolerante (índice do footer + scan linear; blocos desconhecidos como
@@ -61,6 +62,13 @@ serializado (preserva identidade/aliasing, seguro contra ciclos, com limites e o
 e a **fonte** de cada arquivo. Duas propriedades de primeira classe: **scrubbing** (P5) redige valores
 sensíveis por nome antes de gravar, e o gravador **nunca derruba** o programa (P1). **Adaptadores**
 descrevem objetos grandes (numpy/pandas) por forma/dtype/preview.
+
+**Fase 2 — time-travel de escopo.** Dentro de `with flight.record():`, cada escrita de estado vira um
+MUTATION, e depois você reexecuta a memória do programa: `flight timeline --var x` (evolução de uma
+variável), `--who cache` ("quem mutou este dict"), e `Recording.state_at(seq)` reconstrói os locais num
+instante (event sourcing). Captura robusta e à prova de versão, sem cirurgia de bytecode: por evento
+LINE no escopo, diff dos locais (rebinds) e diff de snapshot de objetos sob `watch()` (escritas em
+contêiner/atributo, sem quebrar `type()`). Opt-in e delimitado (P2).
 
 **Próximo:** Fase 1.5 — um viewer TUI (Textual) sobre o `flight-reader`.
 

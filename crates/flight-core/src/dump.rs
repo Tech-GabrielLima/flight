@@ -2,7 +2,7 @@ use std::path::Path;
 
 use flight_format::{
     BlockType, ExceptionLink, FlightWriter, FormatError, FrameInfo, HeaderMeta, MetaBlock,
-    ObjectNode, SourceFile,
+    Mutation, ObjectNode, SourceFile,
 };
 
 use crate::recorder::Recorder;
@@ -58,6 +58,30 @@ pub fn dump_crash(
     }
     // One SOURCE block per file keeps each self-contained and lets a truncated
     // reader still use the files it did get.
+    for src in sources {
+        w.write_block(BlockType::Source, &vec![src])?;
+    }
+    let ring = recorder.snapshot_ring();
+    w.write_block(BlockType::EventRing, &ring)?;
+    w.finish()?;
+    Ok(())
+}
+
+/// The Phase-2 scope recording: META, the MUTATION log, one SOURCE block per
+/// file, and the EVENT_RING. Written on a clean `with flight.record()` exit.
+pub fn dump_scope(
+    path: &Path,
+    meta: MetaBlock,
+    mutations: Vec<Mutation>,
+    sources: Vec<SourceFile>,
+    recorder: &Recorder,
+) -> Result<(), FormatError> {
+    let header = HeaderMeta::new(&meta.flight_version);
+    let mut w = FlightWriter::create(path, &header)?;
+    w.write_block_named(BlockType::Meta, &meta)?;
+    if !mutations.is_empty() {
+        w.write_block(BlockType::Mutation, &mutations)?;
+    }
     for src in sources {
         w.write_block(BlockType::Source, &vec![src])?;
     }

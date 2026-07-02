@@ -248,6 +248,44 @@ def _qualname(t: type) -> str:
     return f"{t.__module__}.{t.__qualname__}"
 
 
+def describe_shallow(
+    value: Any, *, max_str: int = MAX_STR, repr_limit: int = REPR_LIMIT
+) -> tuple[str, "str | None", "str | None", "int | None"]:
+    """A one-level rendering of a value: `(kind, repr, type_name, length)`.
+
+    Used by the Phase-2 mutation log, which stores a snapshot of *what a value
+    was* at each write — a sequence of renderings, not deep graphs. Never
+    expands children and never raises (`__repr__` is user code, P1).
+    """
+    t = type(value)
+    if value is None:
+        return ("none", "None", None, None)
+    if t is bool:
+        return ("bool", "True" if value else "False", None, None)
+    if t is int:
+        return ("int", repr(value), None, None)
+    if t is float:
+        return ("float", repr(value), None, None)
+    if t is str:
+        return ("str", value[:max_str], None, len(value))
+    if t in (bytes, bytearray):
+        b = bytes(value)
+        return ("bytes", repr(b[:64]), None, len(b))
+    if isinstance(value, dict):
+        return ("dict", None, _qualname(t) if t is not dict else None, _safe_len(value))
+    if isinstance(value, (list, tuple, set, frozenset)):
+        kinds = {list: "list", tuple: "tuple", set: "set", frozenset: "frozenset"}
+        return (kinds.get(t, "list"), None, None, _safe_len(value))
+    # generic object: safe repr, no expansion
+    try:
+        r = repr(value)
+    except BaseException as e:
+        r = f"<repr failed: {type(e).__name__}>"
+    if len(r) > repr_limit:
+        r = r[:repr_limit] + "…"
+    return ("object", r, _qualname(t), None)
+
+
 def _size(node: _Node) -> int:
     """Rough byte cost of a node, for the budget."""
     rep = node[2] or ""

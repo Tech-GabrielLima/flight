@@ -64,6 +64,9 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
     if f.has_crash:
         _print_frames(f, show_locals=not args.no_locals, max_locals=args.max_locals)
 
+    if f.has_mutations:
+        print(f"mutations   : {f.mutation_count}  (scope recording — see `flight timeline`)")
+
     wrapped = "  (ring wrapped — older events dropped)" if f.wrapped else ""
     print(f"events      : {f.event_count} across {f.code_count} code objects{wrapped}")
     if f.recent_events:
@@ -106,6 +109,37 @@ def _clip(s: str, width: int = 68) -> str:
     return s if len(s) <= width else s[:width] + "…"
 
 
+def _cmd_timeline(args: argparse.Namespace) -> int:
+    """Print the mutation timeline of a scope `.flight`."""
+    f = read(args.file)
+    if not f.has_mutations:
+        print("no scope recording in this file (was it written by `with flight.record()`?)")
+        return 0
+    rec = f.recording()
+
+    if args.var:
+        muts = rec.history(args.var)
+        print(f"history of local '{args.var}' ({len(muts)} writes):")
+    elif args.who:
+        muts = rec.who_mutated(args.who)
+        print(f"writes to '{args.who}' ({len(muts)} writes):")
+    else:
+        muts = rec.mutations
+        print(f"timeline: {len(muts)} mutations (variables: {', '.join(rec.names()) or '—'})")
+
+    limit = args.limit
+    for m in muts[:limit]:
+        where = f"{Path(m.file).name}:{m.line}"
+        if m.kind == "local":
+            target = m.name
+        else:
+            target = f"{m.name}[{m.key}]" if m.key is not None else m.name
+        print(f"  #{m.seq:<5} {where:<22} {m.kind:<6} {target} = {_clip(m.value_repr)}")
+    if len(muts) > limit:
+        print(f"  … {len(muts) - limit} more (use --limit)")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="flight",
@@ -129,6 +163,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-locals", type=int, default=12, help="max locals shown per frame (default 12)"
     )
     ins.set_defaults(func=_cmd_inspect)
+
+    tl = sub.add_parser("timeline", help="print the mutation timeline of a scope .flight")
+    tl.add_argument("file", help="path to the .flight file")
+    tl.add_argument("--var", help="show the history of a single local variable")
+    tl.add_argument("--who", help="show writes to a watched container/object by name")
+    tl.add_argument("--limit", type=int, default=50, help="max mutations to print (default 50)")
+    tl.set_defaults(func=_cmd_timeline)
 
     return p
 
