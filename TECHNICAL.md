@@ -43,18 +43,26 @@ Eventos que o Flight usa por fase:
 
 ### 0.2 — PyO3 + maturin: como o Rust vira um módulo Python  **[Fase 0 ✅]**
 
-`maturin develop` compila e instala no venv; `maturin build --release` gera a wheel. Detalhe de
-performance: a fronteira Python→Rust custa ~50–100 ns por chamada, e o *dispatch* do callback Python do
-`sys.monitoring` custa mais algumas centenas de ns.
+`maturin develop --release` compila (em release) e instala no venv; `maturin build --release` gera a
+wheel. **Detalhe crítico:** `maturin develop` sem `--release` compila em **debug** — ~10× mais lento no
+caminho quente. Todos os números de overhead pressupõem release.
 
-> **Otimização pendente (a principal da Fase 1):** hoje o callback é uma função Python que chama o
-> Rust — o baseline "didático". O caminho para o alvo de <5% (P2) em código hot é registrar o callback
-> como **função nativa** (`PyCFunction` gerado pelo PyO3), eliminando o trampolim Python inteiro. O
-> baseline medido em `scripts/bench.py` (~350–500 ns/evento) é dominado exatamente por esse trampolim,
-> não pelo ring buffer em Rust. Ver a seção "Overhead" do [README](README.md).
+> **Otimização de hot path (feita).** Os callbacks do `sys.monitoring` são **funções Rust nativas**
+> (`#[pyfunction]`) registradas direto — o interpretador chama o Rust sem frame de callback Python e sem
+> segundo salto de FFI. Medição decisiva (release): o `sys.monitoring` despachando para um callback que
+> **não faz nada** custa ~37 ns; com o push no ring lock-free ~55 ns; com filtro completo ~85 ns/evento.
+> A descoberta contraintuitiva: um callback **Python** é despachado a ~45 ns, mas uma função PyO3 nativa
+> em **debug** custava ~660 ns — a diferença era inteiramente o modo debug do Rust, não o PyO3. Em
+> release a nativa vence a Python e chega perto do piso. Abaixo de ~37 ns é impossível com PEP 669 (é o
+> custo do próprio `sys.monitoring`); só a instrumentação de bytecode (opção A da Fase 2) eliminaria o
+> callback por evento, ao preço de fragilidade por versão do CPython. Ver "Overhead" no
+> [README](README.md).
 
-Todo entry point Rust exposto ao interpretador usa `std::panic::catch_unwind` e **nunca** propaga um
-pânico para o CPython (P1).
+O ring é **lock-free por thread**: um cache thread-local guarda o ponteiro do ring da thread (validado
+por uma *generation* que o `reset()` incrementa), então o push é um `fetch_add` atômico + um store de 24
+bytes, sem mutex. O filtro interessante/deny e o mapa de códigos usam um hasher de inteiros rápido
+(mixing de Fibonacci) em vez do SipHash padrão. Todo entry point Rust usa `catch_unwind` e **nunca**
+propaga um pânico para o CPython (P1).
 
 ### 0.3 — O pipeline de escrita: ring na frente, disco atrás  **[Fase 0 ✅]**
 

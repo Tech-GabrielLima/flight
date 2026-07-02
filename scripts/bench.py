@@ -60,21 +60,24 @@ def _time(fn, *args, repeat: int) -> float:
 
 
 def _bench(name: str, fn, iters: int, repeat: int, *, record_lines: bool) -> None:
-    fn(1000)  # warm up
+    fn(2000)  # warm up
     base = _time(fn, iters, repeat=repeat)
 
     flight.install(force_include=(__file__,), record_lines=record_lines)
+    # Events for a *single* run (each run does identical work), for an honest
+    # per-event cost — not the cumulative count across repeats.
+    s0 = flight.stats()["total_events"]
+    fn(iters)
+    events = flight.stats()["total_events"] - s0
     rec = _time(fn, iters, repeat=repeat)
-    stats = flight.stats()
     flight.uninstall()
 
     ratio = rec / base if base > 0 else float("inf")
-    events = stats["total_events"]
     ns = (rec - base) * 1e9 / events if events else float("nan")
     mode = "line-level" if record_lines else "call-level"
     print(f"  {name:<12} [{mode:^10}]  base {base*1e3:7.1f}ms  "
           f"flight {rec*1e3:8.1f}ms  {ratio:6.1f}x  "
-          f"{events:>9,} ev  {ns:6.0f} ns/ev")
+          f"{events:>9,} ev/run  {ns:6.0f} ns/ev")
 
 
 def main() -> int:
@@ -83,7 +86,12 @@ def main() -> int:
     ap.add_argument("--repeat", type=int, default=5)
     args = ap.parse_args()
 
-    print(f"iterations {args.iters:,} (best of {args.repeat})\n")
+    import flight._core as _c
+
+    if "release" not in (getattr(_c, "__file__", "") or "") and __debug__:
+        pass  # (can't reliably detect; just remind in the docstring/README)
+    print(f"iterations {args.iters:,} (best of {args.repeat})")
+    print("NOTE: build the extension with `maturin develop --release` for real numbers.\n")
     # Default black box: call-level granularity, always-on-able.
     _bench("call_heavy", call_heavy, args.iters, args.repeat, record_lines=False)
     _bench("line_heavy", line_heavy, args.iters, args.repeat, record_lines=False)

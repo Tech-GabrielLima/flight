@@ -1,12 +1,20 @@
 """Wiring Flight into a running interpreter via `sys.monitoring` (PEP 669).
 
-Phase 0 records the *rear-view mirror*: a ring of PY_START / LINE / RETURN /
-RAISE events for user code, and, on an uncaught exception, dumps it to a
-`.flight` file. Locals, frames and the object graph are Phase 1.
+The rear-view-mirror recording (the ring of PY_START / LINE / RETURN / RAISE
+events) runs on **native Rust callbacks** registered directly with the
+interpreter — no Python callback frame, no second FFI hop, no per-event Python
+work. That is the difference between ~350 ns/event and a few tens of ns: a
+Python callback that does *nothing* already costs ~110 ns just to dispatch, so
+the only way below that is to leave Python out of the loop entirely. Filtering
+(which code to record) and the ring live in Rust; see `flight._core`.
 
-Everything here obeys **P1 — primum non nocere**: every callback is wrapped so
-it can never raise into the interpreter, and installation always preserves the
-previous excepthook behaviour.
+Phase-2 scope capture (which must read `frame.f_locals` in Python) runs on a
+*second* monitoring tool, enabled only inside a `with flight.record()` block, so
+its cost is never paid by the always-on recorder.
+
+Everything obeys **P1 — primum non nocere**: native callbacks are
+`catch_unwind`-guarded in Rust, Python callbacks swallow their errors, and
+installation always preserves the previous excepthook behaviour.
 """
 
 from __future__ import annotations
@@ -22,8 +30,10 @@ if not hasattr(sys, "monitoring"):  # pragma: no cover - guarded by packaging
     raise RuntimeError("flight requires Python 3.12+ (sys.monitoring / PEP 669)")
 
 _mon = sys.monitoring
-#: Flight's monitoring tool id. 0 is debuggers, 1 is coverage; 2 is free.
-TOOL_ID = 2
+#: Tool id for the always-on native ring recorder. 0 is debuggers, 1 coverage.
+TOOL_RING = 2
+#: Tool id for the Phase-2 scope capture (Python), active only inside a scope.
+TOOL_SCOPE = 3
 
 _active: Optional["_Session"] = None
 
@@ -37,15 +47,12 @@ class _Session:
         self._prev_threading_hook = None
         self._prev_unraisable_hook = None
         self._installed = False
-        # Memoize the record/skip decision per source filename. `is_interesting`
-        # calls os.path.realpath — a filesystem hit we must not pay per LINE
-        # event (P2). Filenames are interned per code object, so a dict keyed
-        # on the filename string is a cheap, stable cache.
+        # Per-filename interesting cache for the *scope* tool (the ring tool
+        # filters in Rust). realpath is a filesystem hit we must not repeat.
         self._interesting: dict[str, bool] = {}
-        # Phase-2 scope recording: a stack of active `with flight.record()`
-        # scopes per owning thread. LINE events are enabled while any scope is
-        # active (see _refresh_line_events).
+        # Phase-2 scope recording: a stack of active scopes per owning thread.
         self._scopes: dict[int, list] = {}
+        self._scope_tool_on = False
 
     def _wanted(self, filename: str) -> bool:
         cached = self._interesting.get(filename)
@@ -54,83 +61,36 @@ class _Session:
             self._interesting[filename] = cached
         return cached
 
-    def _note_code(self, code) -> None:
-        """Register a code object's identity (first-write-wins)."""
-        _core.register_code(id(code), code.co_filename, code.co_qualname, code.co_firstlineno)
+    # -- Phase-2 scope capture callbacks (tool 3, Python; scope-only) --------
 
-    # -- sys.monitoring callbacks (hot path; must never raise) --------------
-
-    def _on_py_start(self, code, _offset):
+    def _scope_on_line(self, code, line_number):
         try:
             if not self._wanted(code.co_filename):
-                # Uninteresting code: stop PY_START here. LINE events for it
-                # are silenced the first time each line is hit (_on_line).
                 return _mon.DISABLE
-            self._note_code(code)
-            _core.record(_core.EVENT_PY_START, id(code), code.co_firstlineno)
+            scope = self._current_scope()
+            if scope is not None:
+                scope.capture_line(code, line_number, sys._getframe(1))
         except Exception:
             pass
         return None
 
-    def _on_line(self, code, line_number):
+    def _scope_on_return(self, code, _offset, _retval):
         try:
-            if not self._wanted(code.co_filename):
-                # Pay once per uninteresting location, then never again.
-                return _mon.DISABLE
-            # PY_START already registered interesting code; recording here is
-            # kept to just the ring push to hold the per-line cost down.
-            _core.record(_core.EVENT_LINE, id(code), line_number)
-            # Phase-2: feed the active scope on this thread, if any.
-            if self._scopes:
+            if self._wanted(code.co_filename):
                 scope = self._current_scope()
                 if scope is not None:
-                    scope.capture_line(code, line_number, sys._getframe(1))
+                    # A returning frame's last write has no trailing LINE event.
+                    scope.capture_return(code, sys._getframe(1))
         except Exception:
             pass
         return None
 
-    def _on_py_return(self, code, _offset, _retval):
+    def _scope_on_unwind(self, code, _offset, _exc):
         try:
             if self._wanted(code.co_filename):
-                _core.record(_core.EVENT_PY_RETURN, id(code), 0)
-                # Phase-2: a returning frame's last write has no trailing LINE
-                # event — diff it one final time before it disappears.
-                if self._scopes:
-                    scope = self._current_scope()
-                    if scope is not None:
-                        scope.capture_return(code, sys._getframe(1))
-        except Exception:
-            pass
-        return None
-
-    def _on_raise(self, code, _offset, _exc):
-        try:
-            if self._wanted(code.co_filename):
-                self._note_code(code)  # rare event: ensure the frame has a name
-                _core.record(_core.EVENT_RAISE, id(code), 0)
-        except Exception:
-            pass
-        return None
-
-    def _on_reraise(self, code, _offset, _exc):
-        try:
-            if self._wanted(code.co_filename):
-                self._note_code(code)
-                _core.record(_core.EVENT_RERAISE, id(code), 0)
-        except Exception:
-            pass
-        return None
-
-    def _on_unwind(self, code, _offset, _exc):
-        try:
-            if self._wanted(code.co_filename):
-                self._note_code(code)
-                _core.record(_core.EVENT_PY_UNWIND, id(code), 0)
-                # Phase-2: capture the frame's final state before it unwinds.
-                if self._scopes:
-                    scope = self._current_scope()
-                    if scope is not None:
-                        scope.capture_return(code, sys._getframe(1))
+                scope = self._current_scope()
+                if scope is not None:
+                    scope.capture_return(code, sys._getframe(1))
         except Exception:
             pass
         return None
@@ -185,19 +145,27 @@ class _Session:
 
     def install(self):
         _core.configure(self.config.ring_capacity)
-        _mon.use_tool_id(TOOL_ID, "flight")
+        # Hand the deny/force policy and the DISABLE sentinel to Rust so the
+        # native callbacks can filter and record without touching Python.
+        _core.configure_filter(
+            list(self.config.deny_prefixes),
+            list(self.config.force_include),
+            _mon.DISABLE,
+        )
         ev = _mon.events
-        _mon.register_callback(TOOL_ID, ev.PY_START, self._on_py_start)
-        _mon.register_callback(TOOL_ID, ev.PY_RETURN, self._on_py_return)
-        _mon.register_callback(TOOL_ID, ev.RAISE, self._on_raise)
-        _mon.register_callback(TOOL_ID, ev.RERAISE, self._on_reraise)
-        _mon.register_callback(TOOL_ID, ev.PY_UNWIND, self._on_unwind)
-        # Always register the LINE callback (registration is free); only the
-        # event mask has a cost, and that is toggled by record_lines and by
-        # active scopes (see _refresh_line_events).
-        _mon.register_callback(TOOL_ID, ev.LINE, self._on_line)
+        _mon.use_tool_id(TOOL_RING, "flight")
+        # Native Rust callbacks — the interpreter calls straight into Rust.
+        _mon.register_callback(TOOL_RING, ev.PY_START, _core.cb_py_start)
+        _mon.register_callback(TOOL_RING, ev.PY_RETURN, _core.cb_py_return)
+        _mon.register_callback(TOOL_RING, ev.RAISE, _core.cb_raise)
+        _mon.register_callback(TOOL_RING, ev.RERAISE, _core.cb_reraise)
+        _mon.register_callback(TOOL_RING, ev.PY_UNWIND, _core.cb_unwind)
+        _mon.register_callback(TOOL_RING, ev.LINE, _core.cb_line)
+        events = ev.PY_START | ev.PY_RETURN | ev.RAISE | ev.RERAISE | ev.PY_UNWIND
+        if self.config.record_lines:
+            events |= ev.LINE
+        _mon.set_events(TOOL_RING, events)
         self._installed = True
-        self._refresh_line_events()
 
         import threading
 
@@ -207,22 +175,13 @@ class _Session:
         self._prev_unraisable_hook = sys.unraisablehook
         sys.unraisablehook = self._unraisable_hook
 
-    def _refresh_line_events(self):
-        """Set the monitored event mask: LINE is on when line-recording is
-        configured or any Phase-2 scope is active."""
-        if not self._installed:
-            return
-        ev = _mon.events
-        events = ev.PY_START | ev.PY_RETURN | ev.RAISE | ev.RERAISE | ev.PY_UNWIND
-        if self.config.record_lines or self._scopes:
-            events |= ev.LINE
-        _mon.set_events(TOOL_ID, events)
-
-    # -- Phase-2 scope stack ------------------------------------------------
+    # -- Phase-2 scope stack (tool 3) ---------------------------------------
 
     def _enter_scope(self, scope):
+        first = not self._scopes
         self._scopes.setdefault(scope.owner, []).append(scope)
-        self._refresh_line_events()  # ensure LINE is on for the recording
+        if first:
+            self._enable_scope_tool()
 
     def _exit_scope(self, scope):
         stack = self._scopes.get(scope.owner)
@@ -230,7 +189,29 @@ class _Session:
             stack.remove(scope)
             if not stack:
                 del self._scopes[scope.owner]
-        self._refresh_line_events()  # turn LINE back off if nothing needs it
+        if not self._scopes:
+            self._disable_scope_tool()
+
+    def _enable_scope_tool(self):
+        ev = _mon.events
+        _mon.use_tool_id(TOOL_SCOPE, "flight-scope")
+        _mon.register_callback(TOOL_SCOPE, ev.LINE, self._scope_on_line)
+        _mon.register_callback(TOOL_SCOPE, ev.PY_RETURN, self._scope_on_return)
+        _mon.register_callback(TOOL_SCOPE, ev.PY_UNWIND, self._scope_on_unwind)
+        _mon.set_events(TOOL_SCOPE, ev.LINE | ev.PY_RETURN | ev.PY_UNWIND)
+        self._scope_tool_on = True
+
+    def _disable_scope_tool(self):
+        if not self._scope_tool_on:
+            return
+        try:
+            _mon.set_events(TOOL_SCOPE, 0)
+            for event in (_mon.events.LINE, _mon.events.PY_RETURN, _mon.events.PY_UNWIND):
+                _mon.register_callback(TOOL_SCOPE, event, None)
+            _mon.free_tool_id(TOOL_SCOPE)
+        except Exception:
+            pass
+        self._scope_tool_on = False
 
     def _current_scope(self):
         import threading
@@ -241,8 +222,9 @@ class _Session:
     def uninstall(self):
         if not self._installed:
             return
+        self._disable_scope_tool()
         try:
-            _mon.set_events(TOOL_ID, 0)
+            _mon.set_events(TOOL_RING, 0)
             for event in (
                 _mon.events.PY_START,
                 _mon.events.PY_RETURN,
@@ -251,8 +233,8 @@ class _Session:
                 _mon.events.RERAISE,
                 _mon.events.PY_UNWIND,
             ):
-                _mon.register_callback(TOOL_ID, event, None)
-            _mon.free_tool_id(TOOL_ID)
+                _mon.register_callback(TOOL_RING, event, None)
+            _mon.free_tool_id(TOOL_RING)
         except Exception:
             pass
 

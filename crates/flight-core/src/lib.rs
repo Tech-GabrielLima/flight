@@ -15,9 +15,9 @@ mod dump;
 mod recorder;
 mod ring;
 
-use std::panic::catch_unwind;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 use pyo3::exceptions::PyValueError;
@@ -74,30 +74,173 @@ fn recorder() -> &'static Recorder {
     RECORDER.get_or_init(|| Recorder::new(RING_CAP.load(Ordering::Relaxed)))
 }
 
-/// A unique, stable id per OS thread, assigned lazily. Cheaper than calling
-/// into Python's `threading.get_ident()` on every event.
-fn thread_id() -> u64 {
-    thread_local! {
-        static TID: u64 = {
-            static NEXT: AtomicU64 = AtomicU64::new(1);
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        };
-    }
-    TID.with(|&t| t)
-}
+/// `sys.monitoring.DISABLE`, handed to us at configure time so the native
+/// callbacks can return it without a Python attribute lookup on the hot path.
+static DISABLE: OnceLock<Py<PyAny>> = OnceLock::new();
 
-/// Record one execution event. Hot path — must stay allocation-free and must
-/// never raise into the interpreter.
-///
-/// `kind` is an [`EventKind`] discriminant (see the module constants exported
-/// to Python). Unknown kinds are ignored.
+/// Record one execution event. Retained for the Python fallback path and
+/// tests; the fast path is the native callbacks below.
 #[pyfunction]
 fn record(kind: u8, code_id: u64, line: u32) {
     let _ = catch_unwind(|| {
         if let Some(k) = EventKind::from_u8(kind) {
-            recorder().record(k, thread_id(), code_id, line);
+            recorder().record(k, code_id, line);
         }
     });
+}
+
+/// Install the deny/force policy and the `DISABLE` sentinel so the native
+/// `sys.monitoring` callbacks can filter and record entirely in Rust.
+#[pyfunction]
+fn configure_filter(deny: Vec<String>, force: Vec<String>, disable: Py<PyAny>) {
+    recorder().set_filter(deny, force);
+    let _ = DISABLE.set(disable);
+}
+
+/// `None` to keep the event, or `sys.monitoring.DISABLE` to stop being called
+/// at this location (the coverage.py trick — pay once, then nothing).
+#[inline]
+fn keep_or_disable(py: Python<'_>, disable: bool) -> Py<PyAny> {
+    if disable {
+        if let Some(d) = DISABLE.get() {
+            return d.clone_ref(py);
+        }
+    }
+    py.None()
+}
+
+/// Decide whether `code` is interesting (cached per code id), registering it on
+/// first sight. Returns its `code_id` if interesting, or `None` to DISABLE.
+#[inline]
+fn interesting_code_id(code: &Bound<'_, PyAny>) -> Option<u64> {
+    let code_id = code.as_ptr() as u64;
+    let rec = recorder();
+    match rec.interesting_cached(code_id) {
+        Some(true) => Some(code_id),
+        Some(false) => None,
+        None => {
+            let file = code
+                .getattr("co_filename")
+                .ok()
+                .and_then(|f| f.extract::<String>().ok())
+                .unwrap_or_default();
+            if rec.decide_interesting(code_id, &file) {
+                let qual = code
+                    .getattr("co_qualname")
+                    .ok()
+                    .and_then(|q| q.extract::<String>().ok())
+                    .unwrap_or_default();
+                let first = code
+                    .getattr("co_firstlineno")
+                    .ok()
+                    .and_then(|q| q.extract::<u32>().ok())
+                    .unwrap_or(0);
+                rec.register_code(code_id, &file, &qual, first);
+                Some(code_id)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Record a filtered event; returns whether to DISABLE this location. Only for
+/// events that support DISABLE (LINE, PY_START, PY_RETURN).
+#[inline]
+fn record_filtered(code: &Bound<'_, PyAny>, kind: EventKind, line: u32) -> bool {
+    match interesting_code_id(code) {
+        Some(code_id) => {
+            recorder().record(kind, code_id, line);
+            false
+        }
+        None => true,
+    }
+}
+
+/// Record a filtered event without ever disabling — `sys.monitoring` forbids
+/// returning DISABLE from RAISE / RERAISE / PY_UNWIND.
+#[inline]
+fn record_no_disable(code: &Bound<'_, PyAny>, kind: EventKind) {
+    if let Some(code_id) = interesting_code_id(code) {
+        recorder().record(kind, code_id, 0);
+    }
+}
+
+/// Native `sys.monitoring` LINE callback — the hot path, called by the
+/// interpreter directly (no Python frame, no second FFI hop).
+#[pyfunction]
+fn cb_line(py: Python<'_>, code: Bound<'_, PyAny>, line: u32) -> Py<PyAny> {
+    let disable = catch_unwind(AssertUnwindSafe(|| {
+        record_filtered(&code, EventKind::Line, line)
+    }))
+    .unwrap_or(false);
+    keep_or_disable(py, disable)
+}
+
+/// Native PY_START callback.
+#[pyfunction]
+fn cb_py_start(py: Python<'_>, code: Bound<'_, PyAny>, _offset: Bound<'_, PyAny>) -> Py<PyAny> {
+    let disable = catch_unwind(AssertUnwindSafe(|| {
+        record_filtered(&code, EventKind::PyStart, 0)
+    }))
+    .unwrap_or(false);
+    keep_or_disable(py, disable)
+}
+
+/// Native PY_RETURN callback.
+#[pyfunction]
+fn cb_py_return(
+    py: Python<'_>,
+    code: Bound<'_, PyAny>,
+    _offset: Bound<'_, PyAny>,
+    _retval: Bound<'_, PyAny>,
+) -> Py<PyAny> {
+    let disable = catch_unwind(AssertUnwindSafe(|| {
+        record_filtered(&code, EventKind::PyReturn, 0)
+    }))
+    .unwrap_or(false);
+    keep_or_disable(py, disable)
+}
+
+/// Native RAISE / RERAISE / PY_UNWIND callbacks (all carry an exception arg).
+/// These events cannot be disabled, so they always return `None`.
+#[pyfunction]
+fn cb_raise(
+    py: Python<'_>,
+    code: Bound<'_, PyAny>,
+    _offset: Bound<'_, PyAny>,
+    _exc: Bound<'_, PyAny>,
+) -> Py<PyAny> {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        record_no_disable(&code, EventKind::Raise)
+    }));
+    py.None()
+}
+
+#[pyfunction]
+fn cb_reraise(
+    py: Python<'_>,
+    code: Bound<'_, PyAny>,
+    _offset: Bound<'_, PyAny>,
+    _exc: Bound<'_, PyAny>,
+) -> Py<PyAny> {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        record_no_disable(&code, EventKind::Reraise)
+    }));
+    py.None()
+}
+
+#[pyfunction]
+fn cb_unwind(
+    py: Python<'_>,
+    code: Bound<'_, PyAny>,
+    _offset: Bound<'_, PyAny>,
+    _exc: Bound<'_, PyAny>,
+) -> Py<PyAny> {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        record_no_disable(&code, EventKind::PyUnwind)
+    }));
+    py.None()
 }
 
 /// Register a code object's identity the first time it is seen. Returns
@@ -532,6 +675,13 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(record, m)?)?;
     m.add_function(wrap_pyfunction!(register_code, m)?)?;
     m.add_function(wrap_pyfunction!(configure, m)?)?;
+    m.add_function(wrap_pyfunction!(configure_filter, m)?)?;
+    m.add_function(wrap_pyfunction!(cb_line, m)?)?;
+    m.add_function(wrap_pyfunction!(cb_py_start, m)?)?;
+    m.add_function(wrap_pyfunction!(cb_py_return, m)?)?;
+    m.add_function(wrap_pyfunction!(cb_raise, m)?)?;
+    m.add_function(wrap_pyfunction!(cb_reraise, m)?)?;
+    m.add_function(wrap_pyfunction!(cb_unwind, m)?)?;
     m.add_function(wrap_pyfunction!(stats, m)?)?;
     m.add_function(wrap_pyfunction!(reset, m)?)?;
     m.add_function(wrap_pyfunction!(dump_file, m)?)?;

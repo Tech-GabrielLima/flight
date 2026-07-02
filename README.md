@@ -222,8 +222,11 @@ Requires Python **3.12+** and a Rust toolchain.
 ```console
 python -m venv .venv && . .venv/bin/activate
 pip install maturin pytest textual   # textual is only needed for the TUI viewer
-maturin develop                      # compiles the Rust core and installs `flight` into the venv
+maturin develop --release            # compiles the Rust core (release) and installs it into the venv
 ```
+
+(Plain `maturin develop` builds Rust in debug mode — fine for iterating, ~10× slower on the hot path.
+Use `--release`, and release wheels for distribution.)
 
 ## Use
 
@@ -264,25 +267,36 @@ def _(m):
 
 ## Overhead — the honest picture
 
-flight records only *your* code (stdlib and site-packages are excluded by default), and by default at
-**call/return/exception** granularity — cheap, and enough to answer "which functions ran and how did
-the exception unwind?". Per-line detail (`record_lines=True`) is opt-in.
+flight records only *your* code (stdlib and site-packages are excluded by default, filtered in Rust),
+and by default at **call/return/exception** granularity — enough to answer "which functions ran and how
+did the exception unwind?". Per-line detail (`record_lines=True`) is opt-in.
 
-Measured baseline (`python scripts/bench.py`, 200k iterations, this machine):
+The recording callbacks are **native Rust functions registered directly with `sys.monitoring`** — the
+interpreter calls straight into Rust, with no Python callback frame, no second FFI hop, and a
+**lock-free per-thread ring buffer** (a `fetch_add` and a 24-byte store) on the hot path.
 
-| Workload | Mode | Slowdown | Cost / event |
-|---|---|---:|---:|
-| line-heavy loop (no calls in the hot path) | call-level (default) | **~1.0x** | — |
-| function called every iteration | call-level (default) | ~49x | ~500 ns |
-| line-heavy loop | line-level (opt-in) | ~70x | ~350 ns |
+Measured (`maturin develop --release`, then `python scripts/bench.py`, honest per-run cost):
 
-The takeaway is the per-event cost: **~350–500 ns**, spent almost entirely in the Python-level
-`sys.monitoring` callback and the FFI hop — *not* in the Rust ring buffer. So overhead is near-zero
-when your recorded code isn't in the innermost hot loop, and grows linearly with how many events that
-loop generates. Hitting the <5% black-box target on hot code needs the callback itself to run in
-native code (a `PyCFunction` registered directly), which is a named Phase-1 optimization (see
-[TECHNICAL.md](TECHNICAL.md) §0.2). Phase 0 is honest about being the *didactic* Python-callback
-baseline.
+| What | Cost / event |
+|---|---:|
+| `sys.monitoring` dispatch to a do-nothing callback (the floor) | **~37 ns** |
+| dispatch + lock-free ring push (no filter) | ~55 ns |
+| **full recorded event** (filter + register + push) | **~85 ns** |
+| — for comparison, the old Python-callback + FFI path (debug) | ~350–500 ns |
+
+So a recorded event costs **~85 ns**, ~2.7x slowdown on pathological code that calls a recorded
+function every iteration, and **~1.0x** when your recorded code isn't the innermost hot loop (the
+common case). That is roughly **5–6× faster** than the previous Python-callback path, and within ~2× of
+the hard floor.
+
+**Why not 5 ns?** Because ~37 ns of every event is `sys.monitoring` *itself* — that's the cost of the
+interpreter dispatching to a callback that does *nothing*, measured. You cannot get below it with
+PEP 669; the only way lower is to stop using a per-event callback at all (inject instrumentation into
+the bytecode, à la Phase-2 option A), which trades this floor for per-release fragility. flight sits
+just above the floor: ~37 ns you can't remove, ~48 ns of actual work (filter + ring).
+
+> **Build note:** `maturin develop` compiles Rust in **debug** mode (~10× slower — fine for iterating).
+> Use `maturin develop --release` (and release wheels) for the numbers above.
 
 ## Design principles (the five inviolables)
 

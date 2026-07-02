@@ -1,4 +1,6 @@
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
@@ -6,72 +8,187 @@ use flight_format::{CodeInfo, Event, EventKind, RingPayload};
 
 use crate::ring::Ring;
 
-/// The process-wide recorder: a global logical clock, one [`Ring`] per thread,
-/// and a side map from `code_id` to [`CodeInfo`].
+/// A minimal hasher for our integer keys (code ids are pointers, thread ids are
+/// small). The default `HashMap` uses SipHash — DoS-resistant but ~15 ns per
+/// lookup, which shows up on the per-event hot path. Fibonacci mixing spreads
+/// aligned pointers across buckets in ~1 ns and needs no external crate.
+#[derive(Default)]
+struct IntHasher(u64);
+
+impl Hasher for IntHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    #[inline]
+    fn write_u64(&mut self, n: u64) {
+        self.0 = n.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+    #[inline]
+    fn write_u16(&mut self, n: u16) {
+        self.0 = (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        // Not used for our integer keys, but kept correct as a fallback.
+        for &b in bytes {
+            self.0 = (self.0 ^ b as u64).wrapping_mul(0x0100_0000_01B3);
+        }
+    }
+}
+
+type IntMap<K, V> = HashMap<K, V, BuildHasherDefault<IntHasher>>;
+
+/// A per-thread cache of the current recorder's ring, so the hot path takes no
+/// lock at all. Keyed by `(recorder id, generation)`: a different recorder or a
+/// `reset()` (which bumps the generation) invalidates the cache, and — crucially
+/// — the stale ring pointer is *never dereferenced* because the generation check
+/// happens first (so `reset()` freeing the ring is safe).
+#[derive(Clone, Copy)]
+struct Slot {
+    rec_id: u64,
+    generation: u64,
+    thread: u16,
+    ring: *const Ring,
+}
+
+thread_local! {
+    static SLOT: Cell<Option<Slot>> = const { Cell::new(None) };
+}
+
+static NEXT_RECORDER_ID: AtomicU64 = AtomicU64::new(1);
+
+/// The process-wide recorder: a global logical clock, one [`Ring`] per OS
+/// thread, a side map from `code_id` to [`CodeInfo`], and the interesting/deny
+/// policy cache.
 ///
-/// It never touches disk and never allocates on the hot path (`record`). The
-/// only cross-thread coordination is a `fetch_add` on the clock and a rarely
-/// taken lock when a *new* thread or a *new* code object first appears.
+/// The hot path (`record`) is lock-free in the common case: it stamps a logical
+/// time (one atomic add) and pushes 24 bytes into a thread-local ring found
+/// through the [`Slot`] cache. Locks are taken only when a *new* thread first
+/// records, when a *new* code object first appears, or on drain/reset.
 pub struct Recorder {
-    /// Global logical clock. One `fetch_add` per event orders everything.
+    id: u64,
+    /// Bumped by `reset()`; invalidates every thread's [`Slot`] cache.
+    generation: AtomicU64,
     clock: AtomicU64,
-    /// Capacity of each per-thread ring.
     ring_cap: usize,
-    /// Per-thread rings, keyed by the flight-assigned compact thread id.
-    rings: Mutex<HashMap<u16, Box<Ring>>>,
-    /// Resolves `code_id` -> (file, qualname, first_line). Filled lazily on
-    /// the first PY_START of each code object.
-    codes: Mutex<HashMap<u64, CodeInfo>>,
-    /// Maps OS/Python thread ids to compact u16 ids.
-    thread_ids: Mutex<HashMap<u64, u16>>,
-    next_thread_id: AtomicU64,
+    next_thread: AtomicU64,
+    rings: Mutex<IntMap<u16, Box<Ring>>>,
+    codes: Mutex<IntMap<u64, CodeInfo>>,
+    /// `code_id -> is this code interesting to record?` (computed once).
+    interesting: Mutex<IntMap<u64, bool>>,
+    /// Path prefixes whose code is *not* recorded (stdlib, site-packages…).
+    deny: Mutex<Vec<String>>,
+    /// Substrings that force-include a path even under a denied prefix.
+    force: Mutex<Vec<String>>,
 }
 
 impl Recorder {
     pub fn new(ring_cap: usize) -> Recorder {
         Recorder {
+            id: NEXT_RECORDER_ID.fetch_add(1, Ordering::Relaxed),
+            generation: AtomicU64::new(1),
             clock: AtomicU64::new(0),
             ring_cap,
-            rings: Mutex::new(HashMap::new()),
-            codes: Mutex::new(HashMap::new()),
-            thread_ids: Mutex::new(HashMap::new()),
-            next_thread_id: AtomicU64::new(0),
+            next_thread: AtomicU64::new(0),
+            rings: Mutex::new(IntMap::default()),
+            codes: Mutex::new(IntMap::default()),
+            interesting: Mutex::new(IntMap::default()),
+            deny: Mutex::new(Vec::new()),
+            force: Mutex::new(Vec::new()),
         }
     }
 
-    /// Compact thread id for `os_thread_id`, assigning a fresh one on first
-    /// sight. u16 is plenty (65k threads) and keeps [`Event`] at 24 bytes.
-    fn compact_thread(&self, os_thread_id: u64) -> u16 {
-        let mut ids = self.thread_ids.lock().unwrap();
-        if let Some(&id) = ids.get(&os_thread_id) {
-            return id;
-        }
-        let id = (self.next_thread_id.fetch_add(1, Ordering::Relaxed) & 0xFFFF) as u16;
-        ids.insert(os_thread_id, id);
-        id
-    }
-
-    /// Record one execution event. This is the hot path: it stamps a logical
-    /// time, finds the thread's ring, and pushes 24 bytes.
-    ///
-    /// `line` is meaningful only for LINE events; pass 0 otherwise.
-    pub fn record(&self, kind: EventKind, os_thread_id: u64, code_id: u64, line: u32) {
-        let tstamp = self.clock.fetch_add(1, Ordering::Relaxed);
-        let thread = self.compact_thread(os_thread_id);
-        let event = Event::new(kind, thread, line, code_id, tstamp);
-        // The lock here is uncontended in the common case and never held
-        // across a push; a per-thread cached raw pointer is the phase-2
-        // optimization, unnecessary while events only flow at PY_START/LINE.
+    /// Assign this OS thread a compact id and ring (slow path, once per thread
+    /// per generation). Returns the id and a pointer valid until `reset()`.
+    fn make_thread_ring(&self) -> (u16, *const Ring) {
+        let tid = (self.next_thread.fetch_add(1, Ordering::Relaxed) & 0xFFFF) as u16;
         let mut rings = self.rings.lock().unwrap();
         let ring = rings
-            .entry(thread)
+            .entry(tid)
             .or_insert_with(|| Box::new(Ring::new(self.ring_cap)));
-        ring.push(event);
+        (tid, &**ring as *const Ring)
+    }
+
+    /// Record one execution event. The hot path — no lock in the common case.
+    ///
+    /// `line` is meaningful only for LINE events; pass 0 otherwise.
+    #[inline]
+    pub fn record(&self, kind: EventKind, code_id: u64, line: u32) {
+        let tstamp = self.clock.fetch_add(1, Ordering::Relaxed);
+        let generation = self.generation.load(Ordering::Relaxed);
+        SLOT.with(|cell| {
+            let slot = match cell.get() {
+                Some(s) if s.rec_id == self.id && s.generation == generation => s,
+                _ => {
+                    let (thread, ring) = self.make_thread_ring();
+                    let s = Slot {
+                        rec_id: self.id,
+                        generation,
+                        thread,
+                        ring,
+                    };
+                    cell.set(Some(s));
+                    s
+                }
+            };
+            // SAFETY: `ring` points into a Box owned by `self.rings`; it is only
+            // invalidated by `reset()`, which bumps the generation so the branch
+            // above re-fetches before we ever dereference a freed pointer. Pushes
+            // are single-writer per thread (this thread owns this ring).
+            unsafe {
+                (*slot.ring).push(Event::new(kind, slot.thread, line, code_id, tstamp));
+            }
+        });
+    }
+
+    // -- interesting / deny policy -----------------------------------------
+
+    /// Replace the deny/force policy and clear the cached decisions.
+    pub fn set_filter(&self, deny: Vec<String>, force: Vec<String>) {
+        *self.deny.lock().unwrap() = deny;
+        *self.force.lock().unwrap() = force;
+        self.interesting.lock().unwrap().clear();
+    }
+
+    /// Cached interesting decision for a code id, if already computed.
+    pub fn interesting_cached(&self, code_id: u64) -> Option<bool> {
+        self.interesting.lock().unwrap().get(&code_id).copied()
+    }
+
+    /// Decide (and cache) whether code from `filename` is interesting. Mirrors
+    /// the Python policy: synthetic files (`<...>`) and denied prefixes are out,
+    /// unless force-included. Paths are canonicalized (like `realpath`) once.
+    pub fn decide_interesting(&self, code_id: u64, filename: &str) -> bool {
+        let value = self.compute_interesting(filename);
+        self.interesting.lock().unwrap().insert(code_id, value);
+        value
+    }
+
+    fn compute_interesting(&self, filename: &str) -> bool {
+        if filename.is_empty() || filename.starts_with('<') {
+            return false;
+        }
+        let real = std::fs::canonicalize(filename)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| filename.to_string());
+        if self
+            .force
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|f| real.contains(f.as_str()))
+        {
+            return true;
+        }
+        !self
+            .deny
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|d| real.starts_with(d.as_str()))
     }
 
     /// Register the file/qualname of a code object the first time we see it.
-    /// Returns `true` if this was the first registration (the caller can then
-    /// decide DISABLE-vs-keep on the Python side).
     pub fn register_code(&self, code_id: u64, file: &str, qualname: &str, first_line: u32) -> bool {
         let mut codes = self.codes.lock().unwrap();
         if codes.contains_key(&code_id) {
@@ -88,24 +205,22 @@ impl Recorder {
         true
     }
 
-    /// Total events recorded across all threads.
+    // -- introspection / drain ---------------------------------------------
+
     pub fn total_events(&self) -> u64 {
         self.clock.load(Ordering::Relaxed)
     }
 
-    /// Number of distinct threads that have recorded at least one event.
     pub fn thread_count(&self) -> usize {
         self.rings.lock().unwrap().len()
     }
 
-    /// Number of distinct code objects registered.
     pub fn code_count(&self) -> usize {
         self.codes.lock().unwrap().len()
     }
 
     /// Drain every thread's ring, merge by logical timestamp, and attach only
-    /// the code map entries actually referenced. This is the EVENT_RING
-    /// payload written at crash time.
+    /// the referenced code map entries. This is the EVENT_RING payload.
     pub fn snapshot_ring(&self) -> RingPayload {
         let mut events = Vec::new();
         let mut wrapped = false;
@@ -133,28 +248,30 @@ impl Recorder {
         }
     }
 
-    /// Reset all state (rings, codes, thread map, clock). Used by tests and by
-    /// `flight.uninstall()`.
+    /// Reset all state. Bumps the generation so stale thread-local ring
+    /// pointers are re-fetched (never dereferenced) before the next push.
     pub fn reset(&self) {
         self.rings.lock().unwrap().clear();
         self.codes.lock().unwrap().clear();
-        self.thread_ids.lock().unwrap().clear();
+        self.interesting.lock().unwrap().clear();
         self.clock.store(0, Ordering::Relaxed);
-        self.next_thread_id.store(0, Ordering::Relaxed);
+        self.next_thread.store(0, Ordering::Relaxed);
+        self.generation.fetch_add(1, Ordering::Relaxed);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn records_and_snapshots_in_logical_order() {
         let rec = Recorder::new(1024);
         rec.register_code(1, "app.py", "main", 1);
-        rec.record(EventKind::PyStart, 100, 1, 0);
-        rec.record(EventKind::Line, 100, 1, 10);
-        rec.record(EventKind::Line, 100, 1, 11);
+        rec.record(EventKind::PyStart, 1, 0);
+        rec.record(EventKind::Line, 1, 10);
+        rec.record(EventKind::Line, 1, 11);
 
         let snap = rec.snapshot_ring();
         assert_eq!(snap.events.len(), 3);
@@ -177,7 +294,7 @@ mod tests {
         let rec = Recorder::new(64);
         rec.register_code(1, "a.py", "used", 1);
         rec.register_code(2, "b.py", "unused", 1);
-        rec.record(EventKind::Line, 1, 1, 5);
+        rec.record(EventKind::Line, 1, 5);
         let snap = rec.snapshot_ring();
         assert_eq!(snap.codes.len(), 1);
         assert!(snap.codes.contains_key(&1));
@@ -185,24 +302,57 @@ mod tests {
     }
 
     #[test]
-    fn distinct_threads_get_distinct_compact_ids() {
-        let rec = Recorder::new(64);
-        rec.record(EventKind::Line, 1000, 1, 1);
-        rec.record(EventKind::Line, 2000, 1, 1);
-        rec.record(EventKind::Line, 1000, 1, 1);
+    fn distinct_os_threads_get_distinct_rings() {
+        // Thread identity is the OS thread now: two real threads → two rings.
+        let rec = Arc::new(Recorder::new(64));
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let r = Arc::clone(&rec);
+            handles.push(std::thread::spawn(move || {
+                r.record(EventKind::Line, 1, 1);
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
         assert_eq!(rec.thread_count(), 2);
-        assert_eq!(rec.total_events(), 3);
+        assert_eq!(rec.total_events(), 2);
     }
 
     #[test]
     fn reset_clears_everything() {
         let rec = Recorder::new(64);
         rec.register_code(1, "a.py", "f", 1);
-        rec.record(EventKind::Line, 1, 1, 1);
+        rec.record(EventKind::Line, 1, 1);
         rec.reset();
         assert_eq!(rec.total_events(), 0);
         assert_eq!(rec.thread_count(), 0);
         assert_eq!(rec.code_count(), 0);
         assert!(rec.snapshot_ring().events.is_empty());
+        // Recording after reset works (slot is re-fetched, not a stale pointer).
+        rec.record(EventKind::Line, 1, 2);
+        assert_eq!(rec.total_events(), 1);
+        assert_eq!(rec.snapshot_ring().events.len(), 1);
+    }
+
+    #[test]
+    fn interesting_policy_denies_prefixes_and_synthetic_files() {
+        let rec = Recorder::new(64);
+        rec.set_filter(vec!["/usr/lib/python".to_string()], vec![]);
+        assert!(!rec.compute_interesting("<string>"));
+        assert!(!rec.compute_interesting(""));
+        assert!(!rec.compute_interesting("/usr/lib/python3.13/json/__init__.py"));
+        // A path that doesn't exist can't be canonicalized → uses the raw path;
+        // not under a denied prefix → interesting.
+        assert!(rec.compute_interesting("/home/me/project/app.py"));
+    }
+
+    #[test]
+    fn interesting_decision_is_cached() {
+        let rec = Recorder::new(64);
+        rec.set_filter(vec![], vec![]);
+        assert_eq!(rec.interesting_cached(42), None);
+        rec.decide_interesting(42, "/home/me/app.py");
+        assert_eq!(rec.interesting_cached(42), Some(true));
     }
 }

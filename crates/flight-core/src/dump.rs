@@ -141,7 +141,7 @@ mod tests {
         let rec = Recorder::new(1024);
         rec.register_code(1, "app.py", "main", 1);
         for i in 0..20 {
-            rec.record(EventKind::Line, 1, 1, 10 + i);
+            rec.record(EventKind::Line, 1, 10 + i);
         }
         let meta = MetaBlock {
             python_version: "3.13.1".into(),
