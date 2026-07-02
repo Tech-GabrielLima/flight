@@ -144,6 +144,49 @@ def test_uninteresting_code_is_not_recorded(tmp_path):
     assert stats["total_events"] == 0
 
 
+def test_record_returns_default_on_and_opt_out(tmp_path):
+    mod = _write_module(
+        tmp_path,
+        "calls.py",
+        """
+        def leaf(x):
+            return x + 1
+
+        def run():
+            total = 0
+            for i in range(20):
+                total = leaf(total)
+            return total
+
+        run()
+        """,
+    )
+
+    # Default: PY_RETURN events are recorded (documented rear-view mirror).
+    flight.install(force_include=(str(tmp_path),))
+    _run_module_recorded(mod)
+    default_events = flight.stats()["total_events"]
+    out = tmp_path / "on.flight"
+    flight.capture(path=out)
+    flight.uninstall()
+    kinds_on = {k for k, _f, _l in flight.read(out).recent_events}
+    assert "PY_RETURN" in kinds_on
+    assert "PY_START" in kinds_on
+
+    # Opt out: fewer events, but the call path (PY_START) is still there.
+    flight.install(force_include=(str(tmp_path),), record_returns=False)
+    _run_module_recorded(mod)
+    noret_events = flight.stats()["total_events"]
+    out2 = tmp_path / "off.flight"
+    flight.capture(path=out2)
+    flight.uninstall()
+    kinds_off = {k for k, _f, _l in flight.read(out2).recent_events}
+    assert "PY_START" in kinds_off
+    assert "PY_RETURN" not in kinds_off
+    # Dropping returns cuts the event volume (roughly in half for call-heavy code).
+    assert noret_events < default_events
+
+
 def test_stats_shape():
     flight.install()
     s = flight.stats()

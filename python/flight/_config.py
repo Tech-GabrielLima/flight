@@ -58,6 +58,12 @@ class Config:
     #: granularity, which is cheap and already answers "which functions ran,
     #: and how did the exception unwind?".
     record_lines: bool = False
+    #: Record PY_RETURN events in the ring. On by default (the documented
+    #: rear-view mirror). Turning it off **halves** the event volume on code
+    #: that calls functions in a hot loop — the call path stays fully visible
+    #: through PY_START, and returns are inferable from the call sequence. Frame
+    #: capture, scope time-travel and replay are unaffected either way.
+    record_returns: bool = True
 
     # -- Phase-1 crash capture (frames + locals + object graph) ------------
     #: Global time budget for serializing the whole crash (P2). If exceeded,

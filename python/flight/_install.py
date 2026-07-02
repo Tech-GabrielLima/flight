@@ -161,7 +161,11 @@ class _Session:
         _mon.register_callback(TOOL_RING, ev.RERAISE, _core.cb_reraise)
         _mon.register_callback(TOOL_RING, ev.PY_UNWIND, _core.cb_unwind)
         _mon.register_callback(TOOL_RING, ev.LINE, _core.cb_line)
-        events = ev.PY_START | ev.PY_RETURN | ev.RAISE | ev.RERAISE | ev.PY_UNWIND
+        # PY_START + the exception events are always on (the call path and how it
+        # unwound). PY_RETURN and LINE are opt-outs/opt-ins for event volume.
+        events = ev.PY_START | ev.RAISE | ev.RERAISE | ev.PY_UNWIND
+        if self.config.record_returns:
+            events |= ev.PY_RETURN
         if self.config.record_lines:
             events |= ev.LINE
         _mon.set_events(TOOL_RING, events)

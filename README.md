@@ -252,10 +252,10 @@ python -m flight timeline scope.flight    # a scope recording's mutation timelin
 python -m flight repro crash.flight       # generate + verify a reproduction script
 ```
 
-Configuration (`flight.Config`): `ring_capacity`, `output_dir`, `dump_on_crash`, `record_lines`, the
-`deny_prefixes` / `force_include` policy that keeps stdlib and site-packages out of the recording, and
-the crash-capture budget (`capture_deadline_ms`, `capture_max_bytes`, `max_str`, `max_container`,
-`max_depth`, `repr_limit`, `scrub_patterns`).
+Configuration (`flight.Config`): `ring_capacity`, `output_dir`, `dump_on_crash`, `record_lines`,
+`record_returns` (see below), the `deny_prefixes` / `force_include` policy that keeps stdlib and
+site-packages out of the recording, and the crash-capture budget (`capture_deadline_ms`,
+`capture_max_bytes`, `max_str`, `max_container`, `max_depth`, `repr_limit`, `scrub_patterns`).
 
 Register an adapter for your own big types so they're summarized, not dumped:
 
@@ -290,6 +290,11 @@ So a recorded event costs **~65 ns**, ~2.5x slowdown on pathological code that c
 function every iteration, and **~1.0x** when your recorded code isn't the innermost hot loop (the
 common case). That is roughly **7–8× faster** than the previous Python-callback path, and within ~1.5×
 of the hard floor.
+
+The other lever is **event volume**, not per-event cost. `record_returns=False` drops the PY_RETURN
+events (the call path stays fully visible through PY_START, and returns are inferable) — that **halves**
+the events on call-heavy code, taking the pathological case from ~2.5x to ~1.7x. It changes nothing
+about crash capture, scope time-travel or replay; it's a pure knob, on by default.
 
 **Why not single-digit nanoseconds?** Because ~40 ns of *every* event is `sys.monitoring` itself —
 measured, the cost of the interpreter dispatching to a callback that does **nothing**. No PEP 669 tool

@@ -59,11 +59,14 @@ def _time(fn, *args, repeat: int) -> float:
     return best
 
 
-def _bench(name: str, fn, iters: int, repeat: int, *, record_lines: bool) -> None:
+def _bench(name: str, fn, iters: int, repeat: int, *, record_lines: bool = False,
+           record_returns: bool = True) -> None:
     fn(2000)  # warm up
     base = _time(fn, iters, repeat=repeat)
 
-    flight.install(force_include=(__file__,), record_lines=record_lines)
+    flight.install(
+        force_include=(__file__,), record_lines=record_lines, record_returns=record_returns
+    )
     # Events for a *single* run (each run does identical work), for an honest
     # per-event cost — not the cumulative count across repeats.
     s0 = flight.stats()["total_events"]
@@ -74,7 +77,7 @@ def _bench(name: str, fn, iters: int, repeat: int, *, record_lines: bool) -> Non
 
     ratio = rec / base if base > 0 else float("inf")
     ns = (rec - base) * 1e9 / events if events else float("nan")
-    mode = "line-level" if record_lines else "call-level"
+    mode = "line" if record_lines else ("call" if record_returns else "call-noret")
     print(f"  {name:<12} [{mode:^10}]  base {base*1e3:7.1f}ms  "
           f"flight {rec*1e3:8.1f}ms  {ratio:6.1f}x  "
           f"{events:>9,} ev/run  {ns:6.0f} ns/ev")
@@ -93,10 +96,11 @@ def main() -> int:
     print(f"iterations {args.iters:,} (best of {args.repeat})")
     print("NOTE: build the extension with `maturin develop --release` for real numbers.\n")
     # Default black box: call-level granularity, always-on-able.
-    _bench("call_heavy", call_heavy, args.iters, args.repeat, record_lines=False)
-    _bench("line_heavy", line_heavy, args.iters, args.repeat, record_lines=False)
-    # Opt-in fine granularity: a LINE callback per source line (costly until
-    # the callback moves to native code — a planned Phase-1 optimization).
+    _bench("call_heavy", call_heavy, args.iters, args.repeat)
+    # Same, with PY_RETURN dropped (record_returns=False): ~half the events.
+    _bench("call_heavy", call_heavy, args.iters, args.repeat, record_returns=False)
+    _bench("line_heavy", line_heavy, args.iters, args.repeat)
+    # Opt-in fine granularity: a LINE event per source line.
     _bench("line_heavy", line_heavy, args.iters, args.repeat, record_lines=True)
     return 0
 
