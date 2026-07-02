@@ -151,9 +151,10 @@ mas não lê o valor recém-empurrado na pilha), **(C)** proxies de contêiner (
 escopo (habilitado só enquanto há escopo ativo, via `set_events`), o `_record` faz **(1) diff dos
 locais** do frame contra a linha anterior → rebinds de variáveis, e **(2) diff de snapshot** de cada
 objeto sob `watch(obj)` → escritas em contêiner/atributo, *sem substituir o objeto* (não quebra
-`type()` — é a ideia da opção C, mas não-invasiva). Ambos em granularidade de linha: o **valor gravado
-é exato**; a **linha atribuída** é aquela onde a mudança foi *observada* (o diff é "uma linha depois" da
-escrita). Sem cirurgia de bytecode, funciona em qualquer 3.12+. Cada MUTATION guarda um render raso do
+`type()` — é a ideia da opção C, mas não-invasiva). Como o evento LINE dispara *antes* da linha rodar, a
+mudança detectada é atribuída à linha anterior executada — a que fez a escrita — dando **atribuição
+exata**; e a última escrita de um frame (sem LINE seguinte) é recuperada no **PY_RETURN/PY_UNWIND**,
+então nada é perdido. Sem cirurgia de bytecode, funciona em 3.12+. Cada MUTATION guarda um render raso do
 valor (`kind/repr/type/length`) — o log é uma sequência de snapshots, exatamente o que um histórico por
 variável precisa, mantendo o log pequeno. Um cap (`capture_max_mutations`) impede crescimento sem limite.
 

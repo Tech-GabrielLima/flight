@@ -137,11 +137,14 @@ From Python: `flight.read(path).recording()` gives a `Recording` with `history(n
 
 **How writes are captured (honest engineering).** No bytecode surgery: inside the scope, each `LINE`
 event diffs the frame's locals (→ local rebinds) and diffs each `watch()`-ed object's snapshot (→
-container/attribute writes, without ever subclassing, so `type(x) is dict` still holds). It is
-line-granular — the *value* is exact, the attributed line is where the change was first observed — and
-robust across CPython versions. Per-instruction capture via native bytecode instrumentation is a
-documented future step ([TECHNICAL.md](TECHNICAL.md) §3.2). Recording is opt-in and scope-delimited,
-so its cost is only paid around the code you're investigating (P2).
+container/attribute writes, without ever subclassing, so `type(x) is dict` still holds). A `LINE` event
+fires *before* its line runs, so a detected change is attributed to the previous line executed — the
+line that actually made the write — giving **exact line attribution**; and a frame's final write (no
+trailing `LINE` event) is recovered at `PY_RETURN`/`PY_UNWIND`, so nothing is dropped. It is
+line-granular (multiple writes on one physical line share that line) and robust across CPython versions;
+per-instruction capture via native bytecode instrumentation is a documented future step
+([TECHNICAL.md](TECHNICAL.md) §3.2). Recording is opt-in and scope-delimited, so its cost is only paid
+around the code you're investigating (P2).
 
 **Next:** Phase 1.5 — a Textual TUI viewer over `flight-reader` (frames → locals → object graph →
 source with inline values, and a mutation timeline).

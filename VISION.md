@@ -130,12 +130,14 @@ O que **não** está na Fase 1 (é 1.5): o viewer TUI navegável. Os dados já e
   event sourcing). CLI: `flight timeline [--var|--who]`.
 - **Scrubbing (P5)** aplicado a nomes de locais e chaves/atributos observados; **opt-in e delimitado**
   (só paga custo em torno do código investigado, P2); cap de mutações para não crescer sem limite.
-- 36 testes Rust + 46 testes Python, todos verdes.
+- 36 testes Rust + 50 testes Python, todos verdes.
 
-Limitação honesta: a captura é em granularidade de linha — o valor gravado é exato, e a linha atribuída
-é aquela onde a mudança foi *observada* (o diff é "uma linha depois" da escrita). Granularidade por
-instrução via instrumentação nativa de bytecode é o passo futuro (TECHNICAL.md §3.2, opção A). O que
-**não** está na Fase 2 (é Fase 3): replay determinístico.
+Granularidade: a captura é por linha. Como o evento LINE dispara *antes* da linha rodar, a mudança
+detectada é atribuída à linha anterior executada — a que de fato fez a escrita — dando **atribuição de
+linha exata**; e a última escrita de um frame (sem evento LINE seguinte) é recuperada no
+PY_RETURN/PY_UNWIND, então nada é perdido. Várias escritas na mesma linha física compartilham essa
+linha. Granularidade por instrução via instrumentação nativa de bytecode é o passo futuro
+(TECHNICAL.md §3.2, opção A). O que **não** está na Fase 2 (é Fase 3): replay determinístico.
 
 ---
 

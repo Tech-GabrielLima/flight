@@ -92,6 +92,12 @@ class _Session:
         try:
             if self._wanted(code.co_filename):
                 _core.record(_core.EVENT_PY_RETURN, id(code), 0)
+                # Phase-2: a returning frame's last write has no trailing LINE
+                # event — diff it one final time before it disappears.
+                if self._scopes:
+                    scope = self._current_scope()
+                    if scope is not None:
+                        scope.capture_return(code, sys._getframe(1))
         except Exception:
             pass
         return None
@@ -119,6 +125,11 @@ class _Session:
             if self._wanted(code.co_filename):
                 self._note_code(code)
                 _core.record(_core.EVENT_PY_UNWIND, id(code), 0)
+                # Phase-2: capture the frame's final state before it unwinds.
+                if self._scopes:
+                    scope = self._current_scope()
+                    if scope is not None:
+                        scope.capture_return(code, sys._getframe(1))
         except Exception:
             pass
         return None

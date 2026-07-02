@@ -132,6 +132,75 @@ def test_record_within_existing_session_preserves_it(tmp_path):
     assert flight.read(out).has_mutations
 
 
+def test_last_write_in_a_frame_is_captured(tmp_path):
+    # Regression: a write on a function's LAST line has no trailing LINE event,
+    # so it must be recovered at PY_RETURN — otherwise it would be lost.
+    out = tmp_path / "last.flight"
+
+    def compute():
+        a = 10
+        b = 20
+        result = a + b  # last line of the frame -> result must be captured
+        return result
+
+    with flight.record(path=out):
+        compute()
+
+    rec = flight.read(out).recording()
+    assert [m.value_repr for m in rec.history("result")] == ["30"]
+
+
+def test_nested_frame_only_line_is_captured(tmp_path):
+    out = tmp_path / "nested2.flight"
+
+    def leaf():
+        only = "value"  # single line: captured at PY_RETURN
+
+    def caller():
+        leaf()
+
+    with flight.record(path=out):
+        caller()
+
+    rec = flight.read(out).recording()
+    assert [m.value_repr for m in rec.history("only")] == ["value"]
+
+
+def test_line_attribution_is_exact(tmp_path):
+    out = tmp_path / "lines.flight"
+
+    def f():
+        first = 1  # noqa: F841
+        second = 2  # noqa: F841
+
+    first_line = f.__code__.co_firstlineno
+    with flight.record(path=out):
+        f()
+
+    rec = flight.read(out).recording()
+    by_name = {m.name: m for m in rec.history("first") + rec.history("second")}
+    # `first = 1` is the 2nd line of f, `second = 2` the 3rd — exact attribution.
+    assert by_name["first"].line == first_line + 1
+    assert by_name["second"].line == first_line + 2
+
+
+def test_reassignment_history_is_ordered_and_complete(tmp_path):
+    out = tmp_path / "reassign.flight"
+
+    def run():
+        n = 0
+        n = 1
+        n = 2
+        n = 3
+        return n
+
+    with flight.record(path=out):
+        run()
+
+    rec = flight.read(out).recording()
+    assert [m.value_repr for m in rec.history("n")] == ["0", "1", "2", "3"]
+
+
 def test_cli_timeline(tmp_path):
     script = tmp_path / "prog.py"
     script.write_text(

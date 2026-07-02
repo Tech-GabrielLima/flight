@@ -107,6 +107,7 @@ class _Scope:
         self.truncated = False
         self._seq = 0
         self._locals: dict[int, dict[str, int]] = {}  # id(frame) -> {name: id(value)}
+        self._prev_line: dict[int, int] = {}  # id(frame) -> last line event seen
         self.watches: list[_Watch] = []
         self.path_written: Optional[str] = None
 
@@ -121,9 +122,34 @@ class _Scope:
     # -- capture (called from the LINE callback) ---------------------------
 
     def capture_line(self, code, line: int, frame) -> None:
-        if _thread_id() != self.owner or self._full():
+        # A LINE event fires *before* its line runs, so any change we see now
+        # was made by the previous line executed in this frame — attribute it
+        # there for an exact line, not one line late.
+        fid = id(frame)
+        attr = self._prev_line.get(fid, line)
+        self._diff_frame(code, attr, frame, fid)
+        self._prev_line[fid] = line
+
+    def capture_return(self, code, frame) -> None:
+        """Final diff for a frame about to return or unwind.
+
+        Line-diff detects a write on the *next* LINE event in the frame — but a
+        function's last statement has no next LINE event, so its write would be
+        lost. Diffing once more at PY_RETURN/PY_UNWIND closes that gap; the last
+        line executed is `frame.f_lineno`, so attribution stays exact. We then
+        drop the frame's bookkeeping (it is exiting)."""
+        if _thread_id() != self.owner:
             return
         fid = id(frame)
+        try:
+            self._diff_frame(code, frame.f_lineno, frame, fid)
+        finally:
+            self._locals.pop(fid, None)
+            self._prev_line.pop(fid, None)
+
+    def _diff_frame(self, code, attr_line: int, frame, fid: int) -> None:
+        if _thread_id() != self.owner or self._full():
+            return
         try:
             cur = frame.f_locals
         except Exception:
@@ -136,9 +162,9 @@ class _Scope:
                 vid = id(value)
                 if prev.get(name) != vid:
                     prev[name] = vid
-                    self._emit("local", name, None, value, code, line, fid)
+                    self._emit("local", name, None, value, code, attr_line, fid)
         for w in self.watches:
-            w.diff(self, code, line, fid)
+            w.diff(self, code, attr_line, fid)
 
     # -- emission ----------------------------------------------------------
 
@@ -216,6 +242,7 @@ class _Recording:
         self._watch = list(watch)
         self.scope: Optional[_Scope] = None
         self._auto_installed = False
+        self._entry_frame = None
 
     def __enter__(self) -> _Scope:
         from . import _install
@@ -229,11 +256,21 @@ class _Recording:
         self.scope = _Scope(session, self.path, scrubber)
         for obj in self._watch:
             self.scope.watch(obj)
+        # The frame running the `with` statement: its last block statement has
+        # no trailing LINE event, so we diff it once more in __exit__.
+        self._entry_frame = sys._getframe(1)
         session._enter_scope(self.scope)
         return self.scope
 
     def __exit__(self, exc_type, exc, tb) -> bool:
         assert self.scope is not None
+        try:
+            if self._entry_frame is not None:
+                self.scope.capture_line(
+                    self._entry_frame.f_code, self._entry_frame.f_lineno, self._entry_frame
+                )
+        except Exception:
+            pass
         try:
             self.scope.session._exit_scope(self.scope)
         except Exception:
