@@ -201,6 +201,56 @@ def test_reassignment_history_is_ordered_and_complete(tmp_path):
     assert [m.value_repr for m in rec.history("n")] == ["0", "1", "2", "3"]
 
 
+def test_nested_scopes_each_get_their_own_recording(tmp_path):
+    outer = tmp_path / "outer.flight"
+    inner = tmp_path / "inner.flight"
+    with flight.record(path=outer):
+        a = 1  # noqa: F841
+        with flight.record(path=inner):
+            b = 2  # noqa: F841
+        c = 3  # noqa: F841
+
+    inner_names = flight.read(inner).recording().names()
+    outer_names = flight.read(outer).recording().names()
+    assert "b" in inner_names
+    assert "a" in outer_names  # both scopes recorded independently
+
+
+def test_watch_tracks_object_attribute_writes(tmp_path):
+    out = tmp_path / "attr.flight"
+
+    class Box:
+        pass
+
+    with flight.record(path=out) as rec:
+        box = Box()
+        rec.watch(box, name="box")
+        box.value = 10
+        box.value = 20
+
+    writes = flight.read(out).recording().who_mutated("box")
+    reprs = [m.value_repr for m in writes if m.key == "value"]
+    assert reprs == ["10", "20"]
+
+
+def test_recursion_frames_are_distinguished(tmp_path):
+    out = tmp_path / "rec.flight"
+
+    def countdown(n):
+        marker = n * 10  # noqa: F841
+        if n > 0:
+            countdown(n - 1)
+
+    with flight.record(path=out):
+        countdown(3)
+
+    rec = flight.read(out).recording()
+    marker_writes = rec.history("marker")
+    # one 'marker' write per recursive frame (distinct frame ids)
+    frames = {m.frame for m in marker_writes}
+    assert len(frames) >= 3
+
+
 def test_cli_timeline(tmp_path):
     script = tmp_path / "prog.py"
     script.write_text(

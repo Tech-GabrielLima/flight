@@ -158,7 +158,7 @@ class GraphSerializer:
         if t is bool:
             return (nid, "bool", "True" if obj else "False", None, None, False, [])
         if t is int:
-            return (nid, "int", repr(obj), None, None, False, [])
+            return (nid, "int", _int_repr(obj), None, None, False, [])
         if t is float:
             return (nid, "float", repr(obj), None, None, False, [])
         if t is str:
@@ -248,6 +248,18 @@ def _qualname(t: type) -> str:
     return f"{t.__module__}.{t.__qualname__}"
 
 
+def _int_repr(value: int) -> str:
+    """`repr` of an int, but safe for huge ones: CPython raises ValueError when
+    converting an int with more than ~4300 digits to a string (a DoS guard)."""
+    try:
+        return repr(value)
+    except ValueError:
+        try:
+            return f"<int {value.bit_length()} bits>"
+        except Exception:
+            return "<huge int>"
+
+
 def describe_shallow(
     value: Any, *, max_str: int = MAX_STR, repr_limit: int = REPR_LIMIT
 ) -> tuple[str, "str | None", "str | None", "int | None"]:
@@ -263,7 +275,7 @@ def describe_shallow(
     if t is bool:
         return ("bool", "True" if value else "False", None, None)
     if t is int:
-        return ("int", repr(value), None, None)
+        return ("int", _int_repr(value), None, None)
     if t is float:
         return ("float", repr(value), None, None)
     if t is str:

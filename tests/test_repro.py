@@ -156,6 +156,24 @@ def test_repro_replays_recorded_nondeterminism(tmp_path):
         assert "FLIGHT_REPRO_OK" in proc.stdout
 
 
+def test_repro_of_nested_function_does_not_crash_generation(tmp_path):
+    # A crash inside a closure has a "<locals>" qualname that can't be resolved
+    # by import; generation must still succeed (best-effort skeleton).
+    f = _record_crash(
+        tmp_path,
+        """
+        def make():
+            def inner(x):
+                return x[5]      # IndexError inside a closure
+            return inner
+        make()([1, 2])
+        """,
+    )
+    result = build_repro(f)
+    assert result.script  # generation succeeded
+    assert "<locals>" in result.script  # the unresolved qualname is emitted
+
+
 def test_repro_reports_no_crash_file(tmp_path):
     # a ring-only file has no frames
     out = tmp_path / "ring.flight"

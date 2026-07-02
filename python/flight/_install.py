@@ -35,6 +35,7 @@ class _Session:
         self.config = config
         self._prev_excepthook = sys.excepthook
         self._prev_threading_hook = None
+        self._prev_unraisable_hook = None
         self._installed = False
         # Memoize the record/skip decision per source filename. `is_interesting`
         # calls os.path.realpath — a filesystem hit we must not pay per LINE
@@ -161,6 +162,25 @@ class _Session:
         if self._prev_threading_hook is not None:
             self._prev_threading_hook(args)
 
+    def _unraisable_hook(self, unraisable):
+        # Exceptions Python can't propagate — e.g. raised in __del__, in a GC
+        # callback, or in a weakref finalizer. The traceback may be None; the
+        # capture still records the exception chain and the ring.
+        try:
+            if self.config.dump_on_crash and unraisable.exc_value is not None:
+                from ._capture import write_crash_flight
+
+                write_crash_flight(
+                    unraisable.exc_type,
+                    unraisable.exc_value,
+                    unraisable.exc_traceback,
+                    self.config,
+                )
+        except Exception:
+            pass
+        if self._prev_unraisable_hook is not None:
+            self._prev_unraisable_hook(unraisable)
+
     # -- lifecycle ----------------------------------------------------------
 
     def install(self):
@@ -184,6 +204,8 @@ class _Session:
         sys.excepthook = self._excepthook
         self._prev_threading_hook = threading.excepthook
         threading.excepthook = self._threading_excepthook
+        self._prev_unraisable_hook = sys.unraisablehook
+        sys.unraisablehook = self._unraisable_hook
 
     def _refresh_line_events(self):
         """Set the monitored event mask: LINE is on when line-recording is
@@ -239,6 +261,8 @@ class _Session:
         sys.excepthook = self._prev_excepthook
         if self._prev_threading_hook is not None:
             threading.excepthook = self._prev_threading_hook
+        if self._prev_unraisable_hook is not None:
+            sys.unraisablehook = self._prev_unraisable_hook
         _core.reset()
         self._installed = False
 

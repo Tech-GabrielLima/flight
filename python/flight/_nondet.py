@@ -22,6 +22,7 @@ non-determinism — flaky tests, time bombs, "fails 1% of the time" — is cover
 
 from __future__ import annotations
 
+import builtins
 import importlib
 import json
 import os
@@ -83,6 +84,15 @@ def _encode(value) -> tuple[str, str]:
     if isinstance(value, dict):
         return ("d", json.dumps(value))
     return ("r", repr(value))  # best-effort fallback
+
+
+def _reconstruct_exc(name: str) -> BaseException:
+    """Rebuild a recorded exception by type name (builtin types are matched
+    exactly; anything else replays as a RuntimeError carrying the name)."""
+    exc = getattr(builtins, name, None)
+    if isinstance(exc, type) and issubclass(exc, BaseException):
+        return exc("replayed from flight recording")
+    return RuntimeError(f"replayed {name} from flight recording")
 
 
 def _decode(tag: str, payload: str):
@@ -149,6 +159,10 @@ class Tape:
                 f"called {source!r} — control flow diverged from the recorded run"
             )
         self._cursor += 1
+        if tag == "!":
+            # The recorded call raised; re-raise the same exception type so the
+            # code's control flow (its except clauses) replays faithfully.
+            raise _reconstruct_exc(payload)
         return _decode(tag, payload)
 
 
@@ -192,21 +206,30 @@ class _Recorder:
         # and never makes the inner one — sees the exact same tape.
         self._depth = 0
 
+    def _record(self, source, tag, payload):
+        self.entries.append((self._seq, source, tag, payload))
+        self._seq += 1
+
     def make_wrapper(self, source, orig):
         def wrapper(*args, **kwargs):
             outermost = self._depth == 0
             self._depth += 1
             try:
                 result = orig(*args, **kwargs)
-            finally:
+            except BaseException as e:
                 self._depth -= 1
+                # A boundary that *raises* is part of the behaviour to replay
+                # (e.g. random.randint(5, 1) -> ValueError caught by the code).
+                if outermost:
+                    self._record(source, "!", type(e).__name__)
+                raise
+            self._depth -= 1
             if outermost:
                 try:
                     tag, payload = _encode(result)
-                    self.entries.append((self._seq, source, tag, payload))
-                    self._seq += 1
                 except Exception:
-                    pass
+                    tag, payload = "r", repr(result)
+                self._record(source, tag, payload)
             return result
 
         return wrapper

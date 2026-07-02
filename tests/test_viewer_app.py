@@ -103,6 +103,33 @@ def test_viewer_shows_timeline_for_scope_file(tmp_path):
     asyncio.run(drive())
 
 
+def test_viewer_opens_a_truncated_crash_file(tmp_path):
+    # A crash file cut short (footer + tail lost) must still open in the viewer.
+    full = tmp_path / "c.flight"
+    flight.install()
+
+    def f(cfg):
+        return cfg["x"][99]
+
+    try:
+        f({"x": [1, 2, 3]})
+    except IndexError:
+        flight.capture(path=full)
+    flight.uninstall()
+
+    data = full.read_bytes()
+    cut = tmp_path / "cut.flight"
+    cut.write_bytes(data[: len(data) - 30])
+
+    app = FlightViewer(cut)
+
+    async def drive():
+        async with app.run_test():
+            app.query_one("#tree", Tree)  # mounted without raising
+
+    asyncio.run(drive())
+
+
 def test_viewer_opens_ring_only_file(tmp_path):
     out = tmp_path / "ring.flight"
     flight.install()
