@@ -67,6 +67,12 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
     if f.has_mutations:
         print(f"mutations   : {f.mutation_count}  (scope recording — see `flight timeline`)")
 
+    if f.has_nondet:
+        tape = f.tape()
+        sources = ", ".join(f"{s}×{n}" for s, n in sorted(tape.sources().items()))
+        print(f"non-det     : {f.nondet_count} recorded  ({sources})")
+        print("              (deterministically replayable — flight.replay(path, fn))")
+
     wrapped = "  (ring wrapped — older events dropped)" if f.wrapped else ""
     print(f"events      : {f.event_count} across {f.code_count} code objects{wrapped}")
     if f.recent_events:
@@ -140,6 +146,26 @@ def _cmd_timeline(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_repro(args: argparse.Namespace) -> int:
+    """Generate (and verify) a standalone reproduction script from a crash."""
+    from ._repro import write_repro
+
+    result = write_repro(args.file, args.output, verify=not args.no_verify)
+    if not result.script:
+        print(f"cannot build a repro: {result.reason}", file=sys.stderr)
+        return 1
+    print(f"wrote {result.path}")
+    for note in result.notes:
+        print(f"  note: {note}")
+    if result.approximate:
+        print("  (approximate — some values were truncated/redacted or opaque)")
+    if result.verified is True:
+        print("  ✓ verified: it reproduces the same exception")
+    elif result.verified is False:
+        print("  ✗ not verified: it did not reproduce (best-effort skeleton)")
+    return 0
+
+
 def _cmd_view(args: argparse.Namespace) -> int:
     """Open the TUI viewer on a `.flight` file."""
     try:
@@ -189,6 +215,12 @@ def build_parser() -> argparse.ArgumentParser:
     vw = sub.add_parser("view", help="open the interactive TUI viewer (needs textual)")
     vw.add_argument("file", help="path to the .flight file")
     vw.set_defaults(func=_cmd_view)
+
+    rp = sub.add_parser("repro", help="generate a standalone reproduction script from a crash")
+    rp.add_argument("file", help="path to the crash .flight file")
+    rp.add_argument("-o", "--output", help="output script path (default repro_bug.py)")
+    rp.add_argument("--no-verify", action="store_true", help="don't run it to verify")
+    rp.set_defaults(func=_cmd_repro)
 
     return p
 

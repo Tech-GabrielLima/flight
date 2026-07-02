@@ -44,10 +44,10 @@ experiência de leitura; e o arquivo `.flight` compartilhável é o vetor viral.
 **É** um gravador post-mortem de escopo delimitado, com um viewer de primeira classe, evoluindo para
 time-travel debugging. **Não é** um APM, um debugger ao vivo (isso é o `pdb`) nem um profiler.
 
-## Status — Fase 1.5 (o viewer) ✅
+## Status — Fase 3 (re-execução) ✅
 
-As Fases 0 (fundação), 1 (a caixa-preta completa), 2 (time-travel de escopo) e 1.5 (o viewer TUI) estão
-concluídas, ponta a ponta e testadas.
+Todas as fases concluídas, ponta a ponta e testadas: 0 (fundação), 1 (a caixa-preta), 1.5 (viewer TUI),
+2 (time-travel de escopo) e 3 (degraus 1–2 da re-execução).
 
 - **`flight-format`** — o formato `.flight` versionado, append-only e tolerante a truncamento.
 - **`flight-reader`** — parser tolerante (índice do footer + scan linear; blocos desconhecidos como
@@ -77,7 +77,14 @@ abas com o **código** do frame (linha do crash marcada e **valores inline**), *
 **Exception**, **Events** (o ring) e **Timeline** (mutações da Fase 2). A lógica de render fica em
 `_viewer_model` (testada sem terminal); o app é testado *headless* via o `Pilot` do Textual.
 
-**Próximo:** Fase 3 — replay determinístico.
+**Fase 3 — re-execução.** *Degrau 1:* `flight repro crash.flight` gera um `repro_bug.py` autocontido e
+**verificado** — reconstrói os argumentos do frame do crash a partir do grafo de objetos (aliasing/ciclos
+preservados; objetos opacos viram stubs), embute a fonte, chama a função e confere a exceção em subprocesso.
+*Degrau 2:* `with flight.deterministic(path):` grava a não-determinação (time/random/uuid/urandom/secrets/…)
+num bloco NONDET, e `flight.replay(path, fn)` reexecuta bit a bit; `ReplayDivergence` aponta onde o fluxo
+divergiu. *Convergência:* um crash dentro de `deterministic()` grava frames **e** a fita no mesmo arquivo,
+e o `repro` tece a fita no script — **reproduzindo um crash flaky de tempo/aleatoriedade deterministicamente**.
+Degrau 3 (threads) é pesquisa: replay garantido só single-thread/asyncio; arquivos/sockets estagiados.
 
 ## Instalar & compilar
 

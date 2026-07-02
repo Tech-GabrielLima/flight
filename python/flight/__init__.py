@@ -29,6 +29,7 @@ from __future__ import annotations
 from ._adapters import Adapted, adapter
 from ._config import Config
 from ._install import dump, install, is_installed, uninstall
+from ._nondet import ReplayDivergence, Tape, deterministic, replay, replay_tape
 from ._read import Crash, Flight, Frame, Mutation, Recording, read
 from ._record import record, watch
 
@@ -42,18 +43,32 @@ __all__ = [
     "Frame",
     "Mutation",
     "Recording",
+    "ReplayDivergence",
+    "Tape",
     "__version__",
     "adapter",
     "capture",
+    "deterministic",
     "dump",
     "install",
     "is_installed",
     "read",
     "record",
+    "replay",
+    "replay_tape",
+    "repro",
     "stats",
     "uninstall",
     "watch",
 ]
+
+
+def repro(flight_path, out_path=None, *, verify=True):
+    """Generate (and verify) a standalone reproduction script from a crash
+    `.flight`. Returns a `ReproResult`. See `flight repro` on the CLI."""
+    from ._repro import write_repro
+
+    return write_repro(flight_path, out_path, verify=verify)
 
 
 def stats() -> dict:

@@ -6,8 +6,8 @@ use std::collections::HashMap;
 
 use flight_format::{
     BlockType, CodeInfo, Event, EventKind, ExceptionLink, FlightWriter, FrameInfo, HeaderMeta,
-    MetaBlock, Mutation, MutationValue, ObjectItem, ObjectNode, RingPayload, SourceFile,
-    TRAILER_MAGIC,
+    MetaBlock, Mutation, MutationValue, NonDetEvent, ObjectItem, ObjectNode, RingPayload,
+    SourceFile, TRAILER_MAGIC,
 };
 use flight_reader::FlightFile;
 
@@ -384,6 +384,34 @@ fn mutation_block_roundtrips() {
 }
 
 #[test]
+fn nondet_block_roundtrips() {
+    let mut buf = Vec::new();
+    let mut w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
+    w.write_block_named(BlockType::Meta, &sample_meta())
+        .unwrap();
+    let events = vec![
+        NonDetEvent {
+            seq: 0,
+            source: "time.time".into(),
+            tag: "f".into(),
+            payload: "1783000000.5".into(),
+        },
+        NonDetEvent {
+            seq: 1,
+            source: "random.random".into(),
+            tag: "f".into(),
+            payload: "0.375".into(),
+        },
+    ];
+    w.write_block(BlockType::Nondet, &events).unwrap();
+    w.finish().unwrap();
+
+    let f = FlightFile::from_bytes(&buf).unwrap();
+    assert!(!f.partial);
+    assert_eq!(f.nondet(), events);
+}
+
+#[test]
 fn crash_accessors_are_empty_on_a_ring_only_file() {
     // A Phase-0 file (META + EVENT_RING) has no crash blocks; accessors must
     // return empty, not error.
@@ -394,5 +422,6 @@ fn crash_accessors_are_empty_on_a_ring_only_file() {
     assert!(f.sources().is_empty());
     assert!(f.objects().is_empty());
     assert!(f.mutations().is_empty());
+    assert!(f.nondet().is_empty());
     assert!(f.event_ring().is_some());
 }

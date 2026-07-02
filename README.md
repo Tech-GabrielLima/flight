@@ -69,10 +69,10 @@ Three bets underpin the project (see [VISION.md](VISION.md)):
 **It is** a scoped, post-mortem recorder with a first-class viewer, evolving toward time-travel
 debugging. **It is not** an APM, a live debugger (that's `pdb`), or a profiler.
 
-## Status — Phase 1.5 (the viewer) ✅
+## Status — Phase 3 (re-execution) ✅
 
-Phases 0 (foundation), 1 (the full black box), 2 (scoped time-travel) and 1.5 (the TUI viewer) are all
-complete, end to end and fully tested.
+Every phase is complete, end to end and fully tested: 0 (foundation), 1 (the full black box), 1.5 (the
+TUI viewer), 2 (scoped time-travel) and 3 (rungs 1–2 of re-execution).
 
 **The engine (Rust):**
 - **`flight-format`** — the versioned, append-only, truncation-tolerant `.flight` format: header,
@@ -175,7 +175,45 @@ code took), and — for a scope recording — the **Timeline** of mutations.
 The rendering-free logic (inline values, alias index, source window) lives in `_viewer_model` and is
 unit-tested without a terminal; the app is a thin shell, tested headlessly via Textual's `Pilot`.
 
-**Next:** Phase 3 — deterministic replay (record the sources of non-determinism; re-run the flight).
+**Phase 3 — re-execution.** Two rungs, plus their convergence.
+
+*Rung 1 — a bug report that writes and checks itself.* From a crash `.flight`, `flight repro` rebuilds
+the crash function's arguments from the object graph (aliasing and cycles preserved; opaque objects
+become attribute stubs), embeds the source, calls it, and — running it in a subprocess — only labels it
+*verified* if it actually reproduces:
+
+```console
+$ python -m flight repro crash.flight -o repro_bug.py
+wrote repro_bug.py
+  ✓ verified: it reproduces the same exception
+```
+
+*Rung 2 — deterministic replay.* A program is a deterministic function of its non-deterministic inputs.
+Record only those and the run repeats bit-for-bit:
+
+```python
+import flight, time, random
+
+def work():
+    return time.time(), random.random()
+
+with flight.deterministic("run.flight"):
+    original = work()
+
+assert flight.replay("run.flight", work) == original   # identical, though time/random moved on
+```
+
+`flight.replay` feeds the recorded values back in order; if the code calls a boundary in a different
+order than recorded — control flow diverged — it raises `ReplayDivergence` pointing at the exact step.
+Interposed boundaries: `time.*`, `random.*`, `uuid4`, `os.urandom`/`getpid`/`getenv`, `secrets.*`.
+
+*The convergence.* A crash inside `deterministic()` writes the crash frames **and** the recorded
+randomness into one file, so `flight repro` weaves the tape into the generated script — reproducing a
+**flaky, timing/random-dependent crash deterministically, every run**.
+
+Honest scope (rung 3): replay is guaranteed for single-thread / single-asyncio-loop code; files,
+sockets and subprocess are recognized but staged (their state is larger). The clock / randomness / uuid
+class — flaky tests, time bombs, "fails 1% of the time" — is covered.
 
 ## Install & build
 
@@ -207,6 +245,8 @@ Or wrap a script without editing it:
 python -m flight run myscript.py --its --args
 python -m flight inspect crash.flight
 python -m flight view crash.flight        # interactive TUI (needs the [viewer] extra)
+python -m flight timeline scope.flight    # a scope recording's mutation timeline
+python -m flight repro crash.flight       # generate + verify a reproduction script
 ```
 
 Configuration (`flight.Config`): `ring_capacity`, `output_dir`, `dump_on_crash`, `record_lines`, the
@@ -279,6 +319,8 @@ python/flight/
   _adapters.py     type adapters (numpy/pandas/…)
   _viewer.py       the Textual TUI app (Phase 1.5)
   _viewer_model.py rendering-free viewer logic (inline values, aliases)
+  _repro.py        crash → self-contained verified reproduction (Phase 3, rung 1)
+  _nondet.py       deterministic record/replay of non-determinism (Phase 3, rung 2)
   _read.py, _cli.py, _config.py
 tests/             Python tests (serializer, capture, reader, CLI)
 scripts/bench.py   overhead baseline

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use flight_format::{
     BlockType, ExceptionLink, FlightWriter, FormatError, FrameInfo, HeaderMeta, MetaBlock,
-    Mutation, ObjectNode, SourceFile,
+    Mutation, NonDetEvent, ObjectNode, SourceFile,
 };
 
 use crate::recorder::Recorder;
@@ -35,6 +35,7 @@ pub fn dump(path: &Path, meta: MetaBlock, recorder: &Recorder) -> Result<(), For
 /// under a time/byte budget); this just lays the blocks down in order and
 /// closes the file. Written crash-first so that if the reader is ever truncated
 /// mid-file, the most relevant frames/objects survive (VISION.md §1.3).
+#[allow(clippy::too_many_arguments)]
 pub fn dump_crash(
     path: &Path,
     meta: MetaBlock,
@@ -42,6 +43,7 @@ pub fn dump_crash(
     exceptions: Vec<ExceptionLink>,
     frames: Vec<FrameInfo>,
     objects: Vec<ObjectNode>,
+    nondet: Vec<NonDetEvent>,
     recorder: &Recorder,
 ) -> Result<(), FormatError> {
     let header = HeaderMeta::new(&meta.flight_version);
@@ -56,8 +58,35 @@ pub fn dump_crash(
     if !objects.is_empty() {
         w.write_block(BlockType::Object, &objects)?;
     }
+    if !nondet.is_empty() {
+        w.write_block(BlockType::Nondet, &nondet)?;
+    }
     // One SOURCE block per file keeps each self-contained and lets a truncated
     // reader still use the files it did get.
+    for src in sources {
+        w.write_block(BlockType::Source, &vec![src])?;
+    }
+    let ring = recorder.snapshot_ring();
+    w.write_block(BlockType::EventRing, &ring)?;
+    w.finish()?;
+    Ok(())
+}
+
+/// The Phase-3 deterministic recording: META and the NONDET tape (plus any
+/// SOURCE files). Written on a clean exit of `with flight.deterministic()`.
+pub fn dump_nondet(
+    path: &Path,
+    meta: MetaBlock,
+    events: Vec<NonDetEvent>,
+    sources: Vec<SourceFile>,
+    recorder: &Recorder,
+) -> Result<(), FormatError> {
+    let header = HeaderMeta::new(&meta.flight_version);
+    let mut w = FlightWriter::create(path, &header)?;
+    w.write_block_named(BlockType::Meta, &meta)?;
+    if !events.is_empty() {
+        w.write_block(BlockType::Nondet, &events)?;
+    }
     for src in sources {
         w.write_block(BlockType::Source, &vec![src])?;
     }

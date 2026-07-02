@@ -176,12 +176,38 @@ custo só onde instrumentado, ao preço de trabalho fino por versão do CPython.
 para navegação O(1) e a **fronteira C** (checksum + evento `CALL`) também ficam para depois: o log de
 mutações com valores completos já reconstrói qualquer instante por varredura (n é limitado ao escopo).
 
-## CAPÍTULO 4 — FASE 3: replay determinístico
+## CAPÍTULO 4 — FASE 3: re-execução  **[degraus 1–2 implementados]**
 
 Um programa é função determinística dos seus inputs não-determinísticos (I/O, relógio, aleatoriedade,
 env, escalonamento). Gravando **apenas** essas fontes nas bordas (barato), reexecuta-se o código
-substituindo cada fonte pelo valor gravado — o bug se repete bit a bit. Degrau 1 (cedo): repro rasa —
-gerar `repro_bug.py` reconstruindo os argumentos do frame do crash a partir do grafo de objetos.
+substituindo cada fonte pelo valor gravado — o bug se repete bit a bit.
+
+**Degrau 1 — repro raso (`_repro.py`, `flight repro`).** Reconstrói os argumentos do frame do crash a
+partir do grafo de objetos e gera um `repro_bug.py` autocontido. O reconstrutor grafo→código preserva
+**aliasing e ciclos** (contêineres mutáveis criados vazios e depois preenchidos), embute a fonte,
+resolve a função (`Class.method` inclusive) e a chama com os locais que casam com a assinatura
+(`inspect.signature`). Objetos opacos viram stubs de atributos (⇒ `approximate`). **Verificação:** roda o
+script em subprocesso e só rotula `verified` se reproduzir a mesma exceção. Meta honesta: bugs que
+dependem de argumentos/estado local.
+
+**Degrau 2 — replay determinístico (`_nondet.py`, `flight.deterministic()`/`replay()`).** Interpõe uma
+allowlist de fronteiras por **atributo de módulo** (time.*, random.*, uuid4, os.urandom/getpid/getenv,
+secrets.*): no record, cada chamada grava seu resultado num bloco **NONDET**; no replay, devolve os
+valores gravados em ordem. Uma **guarda de reentrância** grava só a chamada mais externa (uuid4 chama
+os.urandom internamente ⇒ uma entrada). `ReplayDivergence` dispara quando o `source` da próxima entrada
+não bate com a chamada — i.e., o fluxo divergiu (por si só um sinal forte). O codec de valores vive em
+Python (float→repr, bytes→hex, dict→JSON); o formato só persiste strings.
+
+**Convergência.** `deterministic()` que termina por exceção grava frames + grafo **e** a fita NONDET no
+mesmo arquivo (`dump_crash` com a fita). O `repro` então tece a fita: re-invoca a função sob
+`replay_tape` até a fita levar à falha gravada (cobre loops que quebram na iteração N) — reproduz um
+**crash flaky de tempo/aleatoriedade deterministicamente**.
+
+**Degrau 3 — threads (pesquisa, não implementado).** `sys.setswitchinterval` alto + gravação da ordem de
+PY_START entre threads (temos os tstamps lógicos) + escalonador cooperativo no replay. Declarado
+honestamente: replay garantido só **single-thread / single-loop asyncio**. Interposição de
+arquivos/sockets/subprocess reconhecida porém **estagiada** (estado maior/stateful) — a classe
+relógio/aleatoriedade/uuid já está coberta.
 
 ## CAPÍTULO 5 — Ordem de ataque
 
@@ -190,5 +216,6 @@ Fase 0  ✅  repo, maturin, ring contando eventos, round-trip do formato, benchm
 Fase 1  ✅  excepthooks + captura de frames/locals + serializador de grafo + fontes + scrubbing.
 Fase 2  ✅  with flight.record(): MUTATION via LINE-diff + watch(); timeline (history/who/state_at).
 Fase 1.5 ✅ Viewer Textual (frames→locais→grafo→código inline→ring→timeline) sobre o reader.
-Fase 3      repro rasa → interposição de fontes → threads.
+Fase 3   ✅ degrau 1 (repro verificado) + degrau 2 (replay determinístico) + convergência.
+            degrau 3 (threads) = pesquisa; arquivos/sockets estagiados.
 ```

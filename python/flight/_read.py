@@ -150,6 +150,7 @@ class Flight:
     frame_count: int = 0
     object_count: int = 0
     mutation_count: int = 0
+    nondet_count: int = 0
 
     @property
     def is_complete(self) -> bool:
@@ -162,6 +163,22 @@ class Flight:
     @property
     def has_mutations(self) -> bool:
         return self.mutation_count > 0
+
+    @property
+    def has_nondet(self) -> bool:
+        return self.nondet_count > 0
+
+    def tape(self) -> "Tape":
+        """Load the recorded non-determinism (NONDET block) as a replay Tape."""
+        from ._nondet import Tape
+
+        rows = _core.read_nondet(str(self.path))
+        return Tape([(r[0], r[1], r[2], r[3]) for r in rows])
+
+    def tape_json(self) -> Optional[str]:
+        if not self.has_nondet:
+            return None
+        return self.tape().to_json()
 
     def events(self, limit: int = 500) -> list[tuple[str, str, str, int]]:
         """Up to `limit` most-recent ring events as `(kind, file, qualname,
@@ -231,4 +248,5 @@ def read(path) -> Flight:
         frame_count=d.get("frame_count", 0),
         object_count=d.get("object_count", 0),
         mutation_count=d.get("mutation_count", 0),
+        nondet_count=d.get("nondet_count", 0),
     )

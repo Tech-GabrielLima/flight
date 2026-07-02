@@ -88,7 +88,7 @@ vêm redigidos por default.
 | 1 | Caixa-preta | Captura automática de exceções: todos os frames + locals + grafo de objetos + fontes | ✅ **concluída** |
 | 1.5 | Viewer | TUI navegável: frames → locals → grafo de objetos → código com valores inline | ✅ **concluída** |
 | 2 | Time-travel de escopo | `with flight.record():` grava escritas de estado; histórico por variável; "quem mutou" | ✅ **concluída** |
-| 3 | Re-execução | Gravação de fontes de não-determinismo; replay determinístico | pesquisa |
+| 3 | Re-execução | Repro automático verificado; replay determinístico (time/random/uuid/…) | ✅ **degraus 1–2** (degrau 3, threads: pesquisa) |
 
 ### 5.1 Definição de "pronto" da Fase 0
 
@@ -154,7 +154,30 @@ linha. Granularidade por instrução via instrumentação nativa de bytecode é 
 - Lógica de render (valores inline, índice de aliases, janela de código) isolada em `_viewer_model`
   (testável sem terminal); o app é uma casca fina, testada *headless* via o `Pilot` do Textual.
 - Textual é dependência **opcional** (`pip install flight-recorder[viewer]`); a CLI degrada com
-  mensagem clara se ausente. 36 testes Rust + 61 testes Python, todos verdes.
+  mensagem clara se ausente.
+
+### 5.5 Definição de "pronto" da Fase 3 (o que esta entrega cumpre)
+
+Os três degraus do guia (§4), entregues em ordem:
+
+- **Degrau 1 — repro raso (`flight repro`).** De um crash `.flight`, gera um `repro_bug.py`
+  **autocontido e verificado**: reconstrói os argumentos do frame do crash a partir do grafo de objetos
+  (com aliasing/ciclos preservados e stubs para objetos opacos), embute a fonte, chama a função e
+  confere a exceção — rodando em subprocesso, só rotula "verified" se de fato reproduz. Bugs que
+  dependem de argumentos/estado local (uma classe enorme de bugs de lógica).
+- **Degrau 2 — replay determinístico (`with flight.deterministic()` / `flight.replay()`).** Um programa
+  é função determinística dos seus inputs não-determinísticos; gravamos **só** essas fontes
+  (time/monotonic/perf_counter, random.*, uuid4, os.urandom/getpid/getenv, secrets.*) num bloco NONDET,
+  e no replay devolvemos os valores gravados em ordem — a execução se repete bit a bit. `ReplayDivergence`
+  aponta o passo exato em que o fluxo divergiu. Modelo do `rr` no nível de APIs Python. Guarda de
+  reentrância grava só a chamada mais externa (uuid4 usa os.urandom internamente → uma entrada, não duas).
+- **Integração.** Um crash dentro de `deterministic()` grava frames + grafo **e** a fita NONDET no mesmo
+  arquivo; `flight repro` então tece a fita no script gerado (re-invocando até a fita levar à falha
+  gravada) — **reproduzindo um crash flaky de tempo/aleatoriedade de forma determinística**.
+- **Degrau 3 (threads):** pesquisa. Honestamente: replay garantido apenas **single-thread /
+  single-loop asyncio**. Interposição de arquivos/sockets/subprocess reconhecida porém estagiada
+  (estado maior); a classe relógio/aleatoriedade/uuid — testes flaky, "falha 1% das vezes" — está coberta.
+- 38 testes Rust + 90 testes Python, todos verdes.
 
 ---
 

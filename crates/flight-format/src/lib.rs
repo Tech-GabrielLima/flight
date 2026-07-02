@@ -28,6 +28,7 @@ mod error;
 mod event;
 mod header;
 mod mutation;
+mod nondet;
 mod writer;
 
 pub use block::{BlockType, IndexEntry, MetaBlock, RingPayload};
@@ -36,6 +37,7 @@ pub use error::FormatError;
 pub use event::{CodeInfo, Event, EventKind};
 pub use header::HeaderMeta;
 pub use mutation::{Mutation, MutationValue};
+pub use nondet::NonDetEvent;
 pub use writer::FlightWriter;
 
 /// File magic, first 4 bytes of every `.flight` file.

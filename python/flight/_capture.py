@@ -46,7 +46,10 @@ def capture(config: Config, path=None) -> Optional[Path]:
     return dump(path, config=config)
 
 
-def _capture(exc_value, exc_tb, config: Config, path) -> Optional[Path]:
+def build_payload(exc_value, exc_tb, config: Config):
+    """Build the crash payload tuples (sources, exceptions, frames, objects)
+    from a live exception — the expensive object-graph walk, without writing.
+    Shared by the crash path and the deterministic-run crash path."""
     # 1. Frames, crash-first (traceback is outermost→innermost; reverse it).
     frames_raw = []
     tb = exc_tb
@@ -96,8 +99,12 @@ def _capture(exc_value, exc_tb, config: Config, path) -> Optional[Path]:
 
     # 5. The exception chain (__cause__ / __context__).
     exc_tuples = _exception_chain(exc_value)
+    return source_tuples, exc_tuples, frame_tuples, objects
 
-    # 6. Write.
+
+def _capture(exc_value, exc_tb, config: Config, path, nondet=None) -> Optional[Path]:
+    source_tuples, exc_tuples, frame_tuples, objects = build_payload(exc_value, exc_tb, config)
+
     from . import __version__
 
     if path is None:
@@ -113,6 +120,7 @@ def _capture(exc_value, exc_tb, config: Config, path) -> Optional[Path]:
         exc_tuples,
         frame_tuples,
         objects,
+        list(nondet or []),
     )
     return path
 

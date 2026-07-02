@@ -20,8 +20,8 @@ use std::collections::HashMap;
 
 use flight_format::{
     BlockType, ExceptionLink, FormatError, FrameInfo, HeaderMeta, IndexEntry, MetaBlock, Mutation,
-    ObjectNode, RingPayload, SourceFile, BLOCK_HEADER_LEN, FORMAT_VERSION, HEADER_FIXED_LEN, MAGIC,
-    TRAILER_LEN, TRAILER_MAGIC,
+    NonDetEvent, ObjectNode, RingPayload, SourceFile, BLOCK_HEADER_LEN, FORMAT_VERSION,
+    HEADER_FIXED_LEN, MAGIC, TRAILER_LEN, TRAILER_MAGIC,
 };
 
 /// One block as found in the file, payload already decompressed.
@@ -127,6 +127,12 @@ impl FlightFile {
     /// event-sourcing log of a `with flight.record()` scope (Phase 2).
     pub fn mutations(&self) -> Vec<Mutation> {
         self.first_payload(BlockType::Mutation).unwrap_or_default()
+    }
+
+    /// The recorded non-determinism (NONDET block), in `seq` order — the tape
+    /// that makes a run deterministically replayable (Phase 3).
+    pub fn nondet(&self) -> Vec<NonDetEvent> {
+        self.first_payload(BlockType::Nondet).unwrap_or_default()
     }
 
     /// The object graph indexed by node id, for random access / expansion.

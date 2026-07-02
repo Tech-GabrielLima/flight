@@ -25,8 +25,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use flight_format::{
-    EventKind, ExceptionLink, FrameInfo, MetaBlock, Mutation, MutationValue, ObjectItem,
-    ObjectNode, SourceFile,
+    EventKind, ExceptionLink, FrameInfo, MetaBlock, Mutation, MutationValue, NonDetEvent,
+    ObjectItem, ObjectNode, SourceFile,
 };
 use flight_reader::FlightFile;
 use recorder::Recorder;
@@ -61,6 +61,8 @@ type MutationTuple = (
     u32,
     u64,
 );
+/// `(seq, source, tag, payload)` — one recorded non-deterministic result.
+type NonDetTuple = (u64, String, String, String);
 
 /// The process-global recorder, built once on first use.
 static RECORDER: OnceLock<Recorder> = OnceLock::new();
@@ -175,6 +177,7 @@ fn dump_crash(
     exceptions: Vec<ExceptionTuple>,
     frames: Vec<FrameTuple>,
     objects: Vec<ObjectTuple>,
+    nondet: Vec<NonDetTuple>,
 ) -> PyResult<()> {
     let meta = MetaBlock {
         python_version,
@@ -226,6 +229,15 @@ fn dump_crash(
             },
         )
         .collect();
+    let nondet: Vec<NonDetEvent> = nondet
+        .into_iter()
+        .map(|(seq, source, tag, payload)| NonDetEvent {
+            seq,
+            source,
+            tag,
+            payload,
+        })
+        .collect();
     dump::dump_crash(
         &path,
         meta,
@@ -233,6 +245,7 @@ fn dump_crash(
         exceptions,
         frames,
         objects,
+        nondet,
         recorder(),
     )
     .map_err(|e| PyValueError::new_err(e.to_string()))
@@ -297,6 +310,60 @@ fn dump_scope(
         .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
+/// Write a Phase-3 deterministic recording (`with flight.deterministic()`).
+#[pyfunction]
+#[pyo3(name = "dump_nondet")]
+#[allow(clippy::too_many_arguments)]
+fn dump_nondet(
+    path: PathBuf,
+    python_version: String,
+    platform: String,
+    argv: Vec<String>,
+    cwd: String,
+    flight_version: String,
+    events: Vec<NonDetTuple>,
+    sources: Vec<SourceTuple>,
+) -> PyResult<()> {
+    let meta = MetaBlock {
+        python_version,
+        platform,
+        argv,
+        cwd,
+        flight_version,
+    };
+    let events: Vec<NonDetEvent> = events
+        .into_iter()
+        .map(|(seq, source, tag, payload)| NonDetEvent {
+            seq,
+            source,
+            tag,
+            payload,
+        })
+        .collect();
+    let sources: Vec<SourceFile> = sources
+        .into_iter()
+        .map(|(filename, sha1, text)| SourceFile {
+            filename,
+            sha1,
+            text,
+        })
+        .collect();
+    dump::dump_nondet(&path, meta, events, sources, recorder())
+        .map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
+/// Read the NONDET tape as a list of `(seq, source, tag, payload)` tuples.
+#[pyfunction]
+fn read_nondet(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyList>> {
+    let f = FlightFile::open(&path).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let out: Vec<NonDetTuple> = f
+        .nondet()
+        .into_iter()
+        .map(|e| (e.seq, e.source, e.tag, e.payload))
+        .collect();
+    Ok(PyList::new(py, out)?.into())
+}
+
 /// Read a `.flight` file and return a summary dict (used by `flight inspect`).
 #[pyfunction]
 fn read_summary(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
@@ -320,6 +387,7 @@ fn read_summary(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
     d.set_item("frame_count", f.frames().len())?;
     d.set_item("object_count", f.objects().len())?;
     d.set_item("mutation_count", f.mutations().len())?;
+    d.set_item("nondet_count", f.nondet().len())?;
 
     if let Some(meta) = f.meta() {
         let m = PyDict::new(py);
@@ -469,10 +537,12 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(dump_file, m)?)?;
     m.add_function(wrap_pyfunction!(dump_crash, m)?)?;
     m.add_function(wrap_pyfunction!(dump_scope, m)?)?;
+    m.add_function(wrap_pyfunction!(dump_nondet, m)?)?;
     m.add_function(wrap_pyfunction!(read_summary, m)?)?;
     m.add_function(wrap_pyfunction!(read_crash, m)?)?;
     m.add_function(wrap_pyfunction!(read_mutations, m)?)?;
     m.add_function(wrap_pyfunction!(read_events, m)?)?;
+    m.add_function(wrap_pyfunction!(read_nondet, m)?)?;
 
     // Event kind discriminants, so Python names them instead of hard-coding.
     m.add("EVENT_PY_START", EventKind::PyStart as u8)?;

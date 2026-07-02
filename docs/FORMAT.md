@@ -67,7 +67,17 @@ reserved now, so the Phase-1.5 viewer can gain Phase-2 powers without a format r
 
 A Phase-0 file contains **META** and **EVENT_RING**. A Phase-1 crash file adds **EXCEPTION**,
 **FRAME**, **OBJECT** and one **SOURCE** block per file involved. A Phase-2 scope file
-(`with flight.record()`) contains **META**, **MUTATION**, **SOURCE** and **EVENT_RING**.
+(`with flight.record()`) contains **META**, **MUTATION**, **SOURCE** and **EVENT_RING**. A Phase-3
+deterministic file (`with flight.deterministic()`) contains **META**, **NONDET** and **EVENT_RING** —
+and, if the block crashed, the crash blocks too, so one file both replays and reproduces.
+
+### NONDET payload
+
+A `Vec<NonDetEvent>` in `seq` order — one recorded result per interposed non-deterministic call.
+Each is `(seq, source, tag, payload)`: `source` is the boundary (`"time.time"`, `"random.random"`, …),
+and `(tag, payload)` is a value the Python codec understands (a float's repr, bytes as hex, a dict as
+JSON, …) — the format just persists the strings. On replay the values are fed back in `seq` order, and
+a call to a `source` different from the recorded one signals control-flow divergence.
 
 ### MUTATION payload
 
