@@ -1,0 +1,37 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "flight-recorder"
+version = "0.0.1"
+description = "A flight recorder for Python: when a program dies, get the black box, not just a traceback."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+authors = [{ name = "Gabriel Lima" }]
+keywords = ["debugging", "post-mortem", "traceback", "recorder", "sys.monitoring"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Debuggers",
+]
+
+[project.urls]
+Homepage = "https://github.com/gabriellima/flight"
+
+[project.scripts]
+flight = "flight._cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.maturin]
+manifest-path = "crates/flight-core/Cargo.toml"
+python-source = "python"
+module-name = "flight._core"
+features = ["pyo3/extension-module"]

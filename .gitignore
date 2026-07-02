@@ -1,0 +1,21 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+*.so
+
+# Flight recordings
+*.flight
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,11 @@
+[package]
+name = "flight-reader"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Parser and query API for .flight files. Tolerates truncated files and skips unknown blocks."
+
+[dependencies]
+flight-format = { path = "../flight-format" }
+serde = { workspace = true }
+rmp-serde = { workspace = true }
