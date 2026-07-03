@@ -287,6 +287,14 @@ Fase 9   ✅ ecossistema (completa, 6 de 6). Plugin pytest (_pytest.py, entry po
             recorders/go + recorders/node: mesmo formato, msgpack à mão + frame zstd "stored" (blocos raw =
             zstd válido sem compressor) → zero deps, lidos pelo reader Rust. Testes: test_ecosystem.py
             (plugin/crypto/middleware/ci) + test_polyglot.py (Go/Node/WASM; pulam sem o toolchain).
+Fase 10  ✅ moonshot: what-if. flight.what_if(path, fn, overrides) (_whatif.py): dois replay_tape do mesmo
+            fn sobre a MESMA fita (fresh tape por run — replay avança os cursores) — baseline reproduz o
+            gravado, contrafactual roda com sys.settrace que na linha alvo faz frame.f_locals[var]=value
+            (write-through PEP 667, Python 3.13+; senão o render avisa). Outcome = returned | exception |
+            diverged (ReplayDivergence = a mudança sai da fita, ex.: chama random() a mais) | não-aplicado
+            (reportado). Override(var,value,line,qualname?,nth) aplicado ANTES da linha (mire a linha que
+            USA o valor). P1: exceção do próprio contrafactual capturada, não levantada. API (como
+            minimize). Testes: test_whatif.py (8).
 Fase 5   🔜 depurador reverso: step-backward + breakpoint no passado sobre state_at(seq);
             bytecode nativo (§3.2) p/ sub-linha; exposição via DAP (VS Code/PyCharm).
 Fase 6   🔜 flight diff (primeira divergência) + delta debugging (ddmin sobre a fita).
@@ -295,7 +303,8 @@ Fase 8   ✅ produção (ver bloco acima): governador de overhead (SLO), supervi
             (sobrevive SIGKILL/OOM), correlação distribuída (W3C traceparent / OpenTelemetry) + flight trace.
 Fase 9   ✅ ecossistema (ver bloco acima): viewer WASM offline, plugin pytest, flight ci + GitHub Action,
             middleware WSGI/ASGI, recorders Go+Node no mesmo formato, cripto em repouso.
-Fase 10  🔜 moonshot: what-if debugging (editar valor no passado e re-executar dali sobre a fita).
+Fase 10  ✅ moonshot: what-if debugging (ver bloco acima): flight.what_if, override de local vivo (PEP 667)
+            + replay sobre a fita → baseline vs contrafactual.
 ```
 
 Detalhamento de cada fase futura: VISION.md §5.6.

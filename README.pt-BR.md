@@ -44,10 +44,12 @@ experiência de leitura; e o arquivo `.flight` compartilhável é o vetor viral.
 **É** um gravador post-mortem de escopo delimitado, com um viewer de primeira classe, evoluindo para
 time-travel debugging. **Não é** um APM, um debugger ao vivo (isso é o `pdb`) nem um profiler.
 
-## Status — Fase 3 (re-execução) ✅
+## Status — todas as fases (0–10) concluídas ✅
 
-Todas as fases concluídas, ponta a ponta e testadas: 0 (fundação), 1 (a caixa-preta), 1.5 (viewer TUI),
-2 (time-travel de escopo) e 3 (degraus 1–2 da re-execução).
+Todo o roadmap está pronto, ponta a ponta e testado: 0 (fundação), 1 (a caixa-preta), 1.5 (viewer TUI),
+2 (time-travel de escopo), 3 (re-execução), 4 (I/O determinístico + escalonamento), 5 (depurador reverso +
+DAP), 6 (diff + delta-debug), 7 (inteligência), 8 (caixa-preta de produção), 9 (ecossistema) e 10 (moonshot:
+what-if debugging).
 
 - **`flight-format`** — o formato `.flight` versionado, append-only e tolerante a truncamento.
 - **`flight-reader`** — parser tolerante (índice do footer + scan linear; blocos desconhecidos como
@@ -154,6 +156,14 @@ um `.flight` por 500 com o trace da request, **agnóstico de framework**. **`fli
 cross-language** (`recorders/go`, `recorders/node`): escrevem o **mesmo** `.flight` — msgpack à mão + frame
 zstd "stored" (blocos raw) → **zero deps**, lidos de volta pelo reader Rust/Python.
 
+**Fase 10 — moonshot: what-if debugging (concluída).** `flight.what_if(path, fn, overrides)` (`_whatif.py`):
+dois replays fiéis sobre a mesma fita — **baseline** reproduz o resultado gravado bit-a-bit, **contrafactual**
+roda com um hook `sys.settrace` que, ao chegar numa linha escolhida, **sobrescreve um local** (via proxy
+write-through do `frame.f_locals`, **PEP 667**, Python 3.13+). Desfechos: retorna/levanta algo diferente, ou
+**diverge** da fita (a mudança tomaria outro caminho pelo mundo gravado — um achado em si), ou **não alcança**
+o ponto (reportado). Tempo/random/IO ficam constantes (fita da Fase 3) → contrafactual reprodutível. É API
+(como `minimize`), requer 3.13+.
+
 ## Roadmap adiante — Fases 4–10
 
 A bússola: **fidelidade → experiência → inteligência → alcance**. Toda fase mantém os cinco invioláveis
@@ -177,8 +187,8 @@ A bússola: **fidelidade → experiência → inteligência → alcance**. Toda 
 - **Fase 9 — Laço viral e ecossistema (concluída).** Viewer no browser (reader Rust → WASM, offline),
   plugin `pytest --flight`, `flight ci` + GitHub Action, middleware WSGI/ASGI, recorders Go+Node no mesmo
   formato, cripto em repouso (AES-256-GCM).
-- **Fase 10 — Moonshot: what-if debugging.** Editar um valor no passado e re-executar dali sobre a fita
-  determinística — o resultado contrafactual.
+- **Fase 10 — Moonshot: what-if debugging (concluída).** `flight.what_if` edita um valor no passado e
+  re-executa dali sobre a fita determinística — o resultado contrafactual, com o mundo gravado constante.
 
 ## Instalar & compilar
 

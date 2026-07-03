@@ -55,6 +55,7 @@ from ._read import Crash, Flight, Frame, Mutation, Recording, read
 from ._record import record, watch
 from ._timetravel import Step, TimeTravel
 from ._web import FlightASGI, FlightWSGI
+from ._whatif import Outcome, Override, WhatIf, what_if
 
 __version__ = "0.0.1"
 
@@ -74,12 +75,15 @@ __all__ = [
     "Link",
     "MinimizeResult",
     "Mutation",
+    "Outcome",
+    "Override",
     "Recording",
     "ReplayDivergence",
     "Step",
     "Tape",
     "TimeTravel",
     "TraceContext",
+    "WhatIf",
     "__version__",
     "adapter",
     "capture",
@@ -107,6 +111,7 @@ __all__ = [
     "trace_graph",
     "uninstall",
     "watch",
+    "what_if",
 ]
 
 

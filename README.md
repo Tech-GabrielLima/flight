@@ -69,12 +69,14 @@ Three bets underpin the project (see [VISION.md](VISION.md)):
 **It is** a scoped, post-mortem recorder with a first-class viewer, evolving toward time-travel
 debugging. **It is not** an APM, a live debugger (that's `pdb`), or a profiler.
 
-## Status — Phase 9 (the ecosystem) ✅
+## Status — all phases complete (0–10) ✅
 
-Every phase through 9 is complete, end to end and fully tested. Phase 9 removed the friction around the
-shareable `.flight`: a **browser WASM viewer**, a **pytest plugin**, **`flight ci`** + a **GitHub Action**,
-framework-agnostic **WSGI/ASGI middleware**, **Go and Node recorders** writing the same format, and at-rest
-**encryption** (see [the ecosystem](#the-ecosystem--phase-9) below).
+The whole roadmap is done, end to end and fully tested — through Phase 10, the moonshot: **what-if
+debugging** (`flight.what_if` — edit a value in the past and re-execute over the deterministic tape to see
+the counterfactual; see [what-if debugging](#what-if-debugging--phase-10) below). Phase 9 removed the
+friction around the shareable `.flight`: a **browser WASM viewer**, a **pytest plugin**, **`flight ci`** + a
+**GitHub Action**, framework-agnostic **WSGI/ASGI middleware**, **Go and Node recorders** writing the same
+format, and at-rest **encryption** (see [the ecosystem](#the-ecosystem--phase-9) below).
 
 Every phase through 8: 0 (foundation), 1 (the full black box),
 1.5 (the TUI viewer), 2 (scoped time-travel), 3 (rungs 1–2 of re-execution), 4 (deterministic I/O +
@@ -504,6 +506,32 @@ the Rust/Python reader (`flight inspect`, the WASM viewer, everything). Both are
 hand-rolled msgpack encoder, and a "stored" zstd frame (a valid zstd stream of raw, uncompressed blocks) so
 no compressor is needed. One black-box format across a polyglot system.
 
+### What-if debugging — Phase 10
+
+The moonshot every earlier phase was building toward: **edit a value in the past and re-execute forward** to
+see the counterfactual. Because Flight can hold the whole recorded world constant (the deterministic tape —
+time, random, uuid, I/O) it runs the same function twice over the same tape: a **baseline** replay that
+reproduces the recorded outcome bit-for-bit, and a **counterfactual** replay with one local variable
+overwritten the moment control reaches a chosen line.
+
+```python
+# The recorded run crashed because `data` was empty. What if it weren't?
+wi = flight.what_if("run.flight", compute, flight.Override("data", [2, 4], line=42))
+print(wi.render())
+# what-if:
+#   · data := [2, 4] at line 42 (was [])
+#   before: raised ZeroDivisionError: division by zero
+#   after:  returned 2067.0
+#   → the change alters the outcome.
+```
+
+Overwriting a live local needs no bytecode surgery on Python 3.13+, where `frame.f_locals` is a write-through
+proxy (PEP 667). Three honest outcomes fall out: the run **returns/raises** something different (the
+counterfactual), it **diverges** from the tape (the change would take a different path through the recorded
+world — e.g. one more `random()` call — itself a finding), or it **never reaches** the override point
+(reported, not ignored). The recorded non-determinism is held constant, so the counterfactual is
+reproducible. It's API, like `minimize`, and needs 3.13+ (it says so when it can't apply an override).
+
 ## Roadmap ahead — Phases 4–10
 
 The compass: **fidelity → experience → intelligence → reach**. Every phase keeps the five inviolables
@@ -537,9 +565,10 @@ The compass: **fidelity → experience → intelligence → reach**. Every phase
   **WASM**, offline single-file page), a **pytest plugin** (`pytest --flight`), **`flight ci`** + a **GitHub
   Action** for red CI, framework-agnostic WSGI/ASGI **middleware**, **Go and Node recorders** writing the
   same `.flight`, and optional at-rest **encryption**. See [the ecosystem](#the-ecosystem--phase-9) above.
-- **Phase 10 — Moonshot: what-if debugging.** Edit a value in the past and re-execute forward over the
-  deterministic tape: "what if `numbers` weren't empty here?" — the counterfactual result. Event sourcing +
-  tape make it feasible.
+- **Phase 10 — Moonshot: what-if debugging. ✅ Done.** `flight.what_if` edits a value in the past and
+  re-executes forward over the deterministic tape: "what if `numbers` weren't empty here?" — the
+  counterfactual result, with the recorded world held constant. See
+  [what-if debugging](#what-if-debugging--phase-10) above.
 
 ## Install & build
 
@@ -708,6 +737,7 @@ python/flight/
   _crypto.py       at-rest encryption of a .flight (AES-256-GCM, optional) (Phase 9)
   _web.py          WSGI/ASGI middleware: a .flight per HTTP 500 (Phase 9)
   _ci.py           flight ci: a Markdown root-cause comment for CI (Phase 9)
+  _whatif.py       what-if: re-execute the tape with a value changed (Phase 10)
   _read.py, _cli.py, _config.py
 crates/flight-wasm/  the reader compiled to WebAssembly (raw C ABI) (Phase 9)
 viewer-wasm/       self-contained offline browser viewer (built by scripts/build-wasm.sh)

@@ -95,7 +95,7 @@ vêm redigidos por default.
 | 7 | Camada de inteligência | `flight explain` (causa-raiz + patch por LLM), `flight repro --pytest`, query semântica na timeline, dedup por frame+estado | ✅ **concluída** (explain heurístico+prompt LLM, repro --pytest, `len(x)>N`, fingerprint) |
 | 8 | Caixa-preta de produção | Governador adaptativo de overhead (SLO), daemon always-on + flush no crash (sobrevive a SIGKILL/OOM), correlação distribuída (OpenTelemetry) | ✅ **concluída** (governador SLO retunando a granularidade ao vivo; supervisor que promove o último checkpoint após `kill -9`; correlação W3C `traceparent` + `flight trace`) |
 | 9 | Laço viral e ecossistema | Viewer no browser (reader Rust → WASM), plugin pytest, GitHub Action, middleware Django/FastAPI/Flask, recorders cross-language, cripto em repouso | ✅ **concluída** (viewer WASM offline, plugin `pytest --flight`, `flight ci` + GitHub Action, middleware WSGI/ASGI, recorders Go+Node no mesmo formato, cripto AES-256-GCM) |
-| 10 | Moonshots | *What-if debugging*: editar um valor no passado e re-executar dali sobre a fita determinística — resultado contrafactual | 🔜 planejada |
+| 10 | Moonshots | *What-if debugging*: editar um valor no passado e re-executar dali sobre a fita determinística — resultado contrafactual | ✅ **concluída** (`flight.what_if`: baseline vs contrafactual sobre a fita, override de local ao vivo via PEP 667) |
 
 ### 5.1 Definição de "pronto" da Fase 0
 
@@ -379,6 +379,23 @@ atrito:
 um valor no passado e re-executar dali para a frente** sobre a fita determinística: "e se `numbers` não
 estivesse vazio aqui?" — o programa segue e você vê o resultado **contrafactual**. É o santo graal do
 time-travel, e a arquitetura (event sourcing + tape) é uma das poucas que o torna factível.
+
+> **Entregue (Fase 10, o moonshot).** `flight.what_if(path, fn, overrides)` (`_whatif.py`): **dois replays
+> fiéis** do mesmo `fn` sobre a mesma fita — o **baseline** reproduz o resultado gravado bit-a-bit, e o
+> **contrafactual** roda com um hook de trace (`sys.settrace`) que, no momento em que a execução chega a uma
+> linha escolhida, **sobrescreve um local** com o seu valor. Mexer num local vivo sem cirurgia de bytecode é
+> possível no Python **3.13+**, onde `frame.f_locals` é um proxy write-through (**PEP 667**): atribuir a ele
+> num callback de trace atualiza o fast-local que o próximo bytecode lê (em Pythons mais velhos o override não
+> pega e o `what_if` **diz isso** em vez de mentir). Três desfechos honestos caem do contrafactual: **retorna/
+> levanta** algo diferente (o resultado contrafactual); **diverge** da fita (a mudança tomaria outro caminho
+> pelo mundo gravado — ex.: chama `random()` uma vez a mais — o que é em si um achado: a edição é
+> inconsistente com a gravação); ou **não alcança** o ponto de override (reportado, não ignorado em silêncio).
+> Tudo respeita P1 — a exceção do *próprio* contrafactual é capturada e reportada (`Outcome`/`WhatIf.render`),
+> nunca levantada em você. O `random`/tempo/IO ficam **constantes** (fita da Fase 3), então o contrafactual é
+> reprodutível entre execuções. **Escopo honesto:** override por `(qualname, linha, nth)`, aplicado logo antes
+> da linha (mira a linha que *usa* o valor, não a que atribui); requer 3.13+; é API (como `flight.minimize`).
+> Testes: `tests/test_whatif.py` (8: conserta-o-crash, mudança inerte, override não-alcançado, divergência,
+> determinístico).
 
 ---
 
