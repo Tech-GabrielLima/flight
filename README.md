@@ -69,10 +69,11 @@ Three bets underpin the project (see [VISION.md](VISION.md)):
 **It is** a scoped, post-mortem recorder with a first-class viewer, evolving toward time-travel
 debugging. **It is not** an APM, a live debugger (that's `pdb`), or a profiler.
 
-## Status — Phase 3 (re-execution) ✅
+## Status — Phase 4 (total replay fidelity) ✅
 
-Every phase is complete, end to end and fully tested: 0 (foundation), 1 (the full black box), 1.5 (the
-TUI viewer), 2 (scoped time-travel) and 3 (rungs 1–2 of re-execution).
+Every phase through 4 is complete, end to end and fully tested: 0 (foundation), 1 (the full black box),
+1.5 (the TUI viewer), 2 (scoped time-travel), 3 (rungs 1–2 of re-execution) and 4 (deterministic I/O +
+thread/asyncio scheduling — see [deterministic I/O](#deterministic-io--phase-4) below).
 
 **The engine (Rust):**
 - **`flight-format`** — the versioned, append-only, truncation-tolerant `.flight` format: header,
@@ -211,11 +212,11 @@ Interposed boundaries: `time.*`, `random.*`, `uuid4`, `os.urandom`/`getpid`/`get
 randomness into one file, so `flight repro` weaves the tape into the generated script — reproducing a
 **flaky, timing/random-dependent crash deterministically, every run**.
 
-Honest scope (rung 3): replay is guaranteed for single-thread / single-asyncio-loop code; the clock /
-randomness / uuid class — flaky tests, time bombs, "fails 1% of the time" — is covered. Files, pipes,
-subprocess and asyncio are now covered too (Phase 4a, below); sockets and real-thread ordering are staged.
+Honest scope (rung 3): the clock / randomness / uuid class — flaky tests, time bombs, "fails 1% of the
+time" — is covered, and so now are files, pipes, subprocess, sockets and the asyncio/thread schedule
+(Phase 4, below). What's still out: data races on *unlocked* shared state, and multiprocessing.
 
-### Deterministic I/O — Phase 4a
+### Deterministic I/O — Phase 4
 
 Scalar boundaries (clock/random/uuid) are only half of what makes a program non-deterministic; the rest is
 **what it read from the world**. `flight.deterministic()` now records that too — file reads, `os.read`
@@ -245,23 +246,48 @@ touches the disk. **Record what was read, hash the rest:** a read larger than `i
 tiny; on replay the live source is re-read and **verified** against the digest (a changed or missing source
 raises `ReplayDivergence`). Pass `io_hash_above=0` to inline everything for fully offline replay.
 
-For **asyncio**, the task-**completion order** is recorded and checked on replay: since determinism comes
-from replaying time and I/O, this pinpoints any residual scheduling divergence at the task level. Sockets
-and real-thread (lock/GIL) ordering are the next slice (4b).
+Socket reads (`recv`/`recv_into`) are recorded the same way. For **asyncio**, the task-**completion order**
+is recorded and checked on replay; since determinism comes from replaying time and I/O, this pinpoints any
+residual scheduling divergence at the task level.
+
+**Threads — the flaky "which thread won" bug.** Under the GIL, what still varies run to run is the *order
+threads acquire shared locks*, which is what makes a lock-protected structure's contents non-deterministic.
+flight records that order and **enforces it** on replay, so the interleaving repeats bit-for-bit:
+
+```python
+log, lock = [], threading.Lock()
+
+def worker(name):
+    for i in range(6):
+        time.sleep(0.001)          # a real race, different every run
+        with lock:
+            log.append((name, i))  # who appends when? — non-deterministic
+
+with flight.deterministic("run.flight"):
+    run_three_workers()            # records the lock-acquisition schedule
+
+# Every replay reproduces the *exact* recorded interleaving:
+assert flight.replay("run.flight", run_three_workers) == recorded_log
+```
+
+Threads are numbered in start order, and each thread replays its own boundary calls on its own tape lane
+(so two threads reading the clock never fight over one order). Honest limits: only locks your code creates
+inside the scope are tracked (the runtime's own locks are left intact), non-blocking/timed acquires aren't
+ordered, and data races on *unlocked* state are outside any lock-based record/replay. A safety timeout
+turns a replay deadlock into a `ReplayDivergence`, never a hang.
 
 ## Roadmap ahead — Phases 4–10
 
 The compass: **fidelity → experience → intelligence → reach**. Every phase keeps the five inviolables
 (P1–P5) and stays useful on its own (P4). Full contracts live in [VISION.md](VISION.md) §5.6.
 
-- **Phase 4 — Total replay fidelity (close rung 3).** Interpose the remaining boundaries — files, sockets,
-  subprocess — **and the scheduler**. The key trick: record the *order* of lock acquisition and task
-  resumption (threads and asyncio), not the scheduler's internals. A program is a deterministic function
-  of its inputs *and the order the world answered in* — record that order and multi-thread replay repeats
-  bit-for-bit. Deliverable: `flight.deterministic()` covering the **flaky concurrency crash**. Honest hard
-  part: large I/O bloats the file → a "record only what was read, hash the rest" mode.
-  **Slice 4a is done** (see [deterministic I/O](#deterministic-io--phase-4a) below); slice 4b is sockets
-  and real-thread ordering.
+- **Phase 4 — Total replay fidelity (close rung 3). ✅ Done.** Files, pipes, subprocess, sockets and the
+  asyncio/thread schedule are now recorded and replayed offline (see [deterministic I/O](#deterministic-io--phase-4a)
+  below). The key trick for concurrency: record the *order* of lock acquisition (threads numbered in start
+  order), not the scheduler's internals, and enforce it on replay — a program is a deterministic function
+  of its inputs *and the order the world answered in*. Honest limits: only user-created locks are tracked,
+  timed/non-blocking acquires aren't ordered, and data races on unlocked state are out of scope;
+  multiprocessing is future work.
 - **Phase 5 — A real reverse debugger.** We already have `state_at(seq)`; the missing piece is the
   *experience*: **step-backward** and a "breakpoint in the past" ("stop when `running` passed 100"), with
   the UI reconstructing locals at that instant. Combined with native bytecode instrumentation (TECHNICAL
@@ -411,8 +437,9 @@ python/flight/
   _viewer_model.py rendering-free viewer logic (inline values, aliases)
   _repro.py        crash → self-contained verified reproduction (Phase 3, rung 1)
   _nondet.py       deterministic record/replay of non-determinism (Phase 3, rung 2)
-  _io.py           deterministic I/O: file/pipe/subprocess reads, hash-of-rest (Phase 4a)
-  _asyncio.py      asyncio task-completion order record + replay check (Phase 4a)
+  _io.py           deterministic I/O: file/pipe/subprocess/socket reads, hash-of-rest (Phase 4)
+  _asyncio.py      asyncio task-completion order record + replay check (Phase 4)
+  _threads.py      thread lock-acquisition order record + replay enforcement (Phase 4)
   _read.py, _cli.py, _config.py
 tests/             Python tests (serializer, capture, reader, CLI)
 scripts/bench.py   overhead baseline

@@ -32,6 +32,7 @@ import hashlib
 import io
 import json
 import os
+import socket
 import subprocess
 from typing import Optional
 
@@ -363,6 +364,43 @@ class IORecorder:
 
         return flight_sub
 
+    def _wrap_recv(self, orig):
+        def flight_recv(sock, *args, **kwargs):
+            outermost = self._rec.enter()
+            try:
+                data = orig(sock, *args, **kwargs)
+            except BaseException as e:
+                self._rec.leave()
+                if outermost:
+                    self._rec.record_raw("io.socket.recv", "!", type(e).__name__)
+                raise
+            self._rec.leave()
+            if outermost:
+                tag, payload = _encode_read(data, self._hash_above)
+                self._rec.record_raw("io.socket.recv", tag, payload)
+            return data
+
+        return flight_recv
+
+    def _wrap_recv_into(self, orig):
+        def flight_recv_into(sock, buffer, *args, **kwargs):
+            outermost = self._rec.enter()
+            try:
+                n = orig(sock, buffer, *args, **kwargs)
+            except BaseException as e:
+                self._rec.leave()
+                if outermost:
+                    self._rec.record_raw("io.socket.recv_into", "!", type(e).__name__)
+                raise
+            self._rec.leave()
+            if outermost:
+                mv = bytes(buffer[:n]) if n else b""
+                tag, payload = _encode_read(mv, self._hash_above)
+                self._rec.record_raw("io.socket.recv_into", tag, payload)
+            return n
+
+        return flight_recv_into
+
     def install(self) -> None:
         self._patch(builtins, "open", self._wrap_open)
         self._patch(io, "open", self._wrap_open)
@@ -371,6 +409,8 @@ class IORecorder:
         self._patch(
             subprocess, "check_output", lambda o: self._wrap_subprocess("check_output", o)
         )
+        self._patch(socket.socket, "recv", self._wrap_recv)
+        self._patch(socket.socket, "recv_into", self._wrap_recv_into)
 
     def _patch(self, obj, attr, make):
         orig = getattr(obj, attr)
@@ -431,6 +471,36 @@ class IOReplayer:
 
         return flight_sub
 
+    def _wrap_recv(self, _orig):
+        def flight_recv(_sock, *_args, **_kwargs):
+            tag, payload = self._tape.take_raw("io.socket.recv")
+            if tag == "!":
+                raise _reconstruct_exc(payload)
+            if tag == "h":
+                raise ReplayDivergence(
+                    "io.socket.recv was recorded in hashed mode and cannot be "
+                    "replayed offline; record with io_hash_above=0"
+                )
+            return payload if tag == "s" else bytes.fromhex(payload)
+
+        return flight_recv
+
+    def _wrap_recv_into(self, _orig):
+        def flight_recv_into(_sock, buffer, *_args, **_kwargs):
+            tag, payload = self._tape.take_raw("io.socket.recv_into")
+            if tag == "!":
+                raise _reconstruct_exc(payload)
+            if tag == "h":
+                raise ReplayDivergence(
+                    "io.socket.recv_into was recorded in hashed mode; record with "
+                    "io_hash_above=0 for offline replay"
+                )
+            data = payload.encode() if tag == "s" else bytes.fromhex(payload)
+            buffer[: len(data)] = data
+            return len(data)
+
+        return flight_recv_into
+
     def install(self) -> None:
         self._patch(builtins, "open", self._wrap_open)
         self._patch(io, "open", self._wrap_open)
@@ -439,6 +509,8 @@ class IOReplayer:
         self._patch(
             subprocess, "check_output", lambda o: self._wrap_subprocess("check_output", o)
         )
+        self._patch(socket.socket, "recv", self._wrap_recv)
+        self._patch(socket.socket, "recv_into", self._wrap_recv_into)
 
     def _patch(self, obj, attr, make):
         orig = getattr(obj, attr)

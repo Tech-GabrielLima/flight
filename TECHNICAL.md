@@ -235,10 +235,12 @@ Fase 2  ✅  with flight.record(): MUTATION via LINE-diff + watch(); timeline (h
 Fase 1.5 ✅ Viewer Textual (frames→locais→grafo→código inline→ring→timeline) sobre o reader.
 Fase 3   ✅ degrau 1 (repro verificado) + degrau 2 (replay determinístico) + convergência.
             degrau 3 (threads) = pesquisa; arquivos/sockets estagiados.
-Fase 4   🟡 fatia 4a: arquivos (read/readline/readinto/iter) + pipes (os.read) + subprocess
-            (run/check_output) gravados na fita; replay offline (escritas engolidas); hash-of-rest
-            (>io_hash_above → len+digest, verificado na fonte viva); asyncio = ordem de conclusão
-            gravada+verificada. Falta (4b): sockets + ORDEM de locks/tasks p/ threads reais.
+Fase 4   ✅ 4a: arquivos (read/readline/readinto/iter) + pipes (os.read) + subprocess (run/check_output)
+            na fita; replay offline (escritas engolidas); hash-of-rest (>io_hash_above → len+digest,
+            verificado na fonte viva); asyncio = ordem de conclusão gravada+verificada.
+            4b: sockets (recv/recv_into); ORDEM de aquisição de locks entre threads gravada+IMPOSTA no
+            replay (threads numeradas por início, cursores por-thread na fita, filtro p/ locks internos
+            do runtime, timeout→ReplayDivergence). Fora: corridas sem lock, multiprocessing, per-await.
 Fase 5   🔜 depurador reverso: step-backward + breakpoint no passado sobre state_at(seq);
             bytecode nativo (§3.2) p/ sub-linha; exposição via DAP (VS Code/PyCharm).
 Fase 6   🔜 flight diff (primeira divergência) + delta debugging (ddmin sobre a fita).

@@ -9,7 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import os
+import socket
 import subprocess
+import sys
+import threading
+import time
 
 import pytest
 
@@ -300,11 +304,117 @@ def test_asyncio_completion_order_recorded_and_replayed(tmp_path):
 def test_asyncio_no_tasks_records_nothing_extra(tmp_path):
     # A deterministic run that never touches asyncio must still replay cleanly.
     def work():
-        import time
-
         return round(time.time(), 6)
 
     out = tmp_path / "run.flight"
     with flight.deterministic(str(out), io_hash_above=0):
         original = work()
     assert flight.replay(str(out), work) == original
+
+
+# -- sockets ----------------------------------------------------------------
+
+
+def test_socketpair_recv_replays_offline(tmp_path):
+    def work():
+        a, b = socket.socketpair()
+        try:
+            b.sendall(b"hello-over-a-socket")
+            first = a.recv(64)
+            b.sendall(b"WXYZ")
+            buf = bytearray(4)
+            n = a.recv_into(buf)
+            return first, n, bytes(buf)
+        finally:
+            a.close()
+            b.close()
+
+    out = tmp_path / "sock.flight"
+    with flight.deterministic(str(out), io_hash_above=0):
+        original = work()
+    assert original[0] == b"hello-over-a-socket"
+
+    # Replay through a socket that nothing ever writes to — data is from the tape.
+    def replay_probe():
+        a, b = socket.socketpair()
+        try:
+            first = a.recv(64)
+            buf = bytearray(4)
+            n = a.recv_into(buf)
+            return first, n, bytes(buf)
+        finally:
+            a.close()
+            b.close()
+
+    assert flight.replay(str(out), replay_probe) == original
+
+
+# -- thread scheduling (lock-acquisition order) -----------------------------
+
+
+def _contended_program():
+    """Three threads racing to append to a shared list under one lock. Which
+    thread appends when varies run to run (the classic flaky-order bug); the
+    sleeps make the raw interleaving genuinely non-deterministic."""
+    log = []
+    lock = threading.Lock()
+
+    def worker(name):
+        for i in range(6):
+            time.sleep(0.0005)  # not interposed: real races on every run
+            with lock:
+                log.append((name, i))
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in ("A", "B", "C")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return log
+
+
+def test_thread_lock_order_is_reproduced(tmp_path):
+    old = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)  # encourage real interleaving while recording
+    try:
+        out = tmp_path / "threads.flight"
+        with flight.deterministic(str(out), io_hash_above=0):
+            recorded = _contended_program()
+
+        # Every replay reproduces the exact recorded interleaving, even though
+        # the raw thread race (the sleeps) differs each time.
+        for _ in range(4):
+            assert flight.replay(str(out), _contended_program) == recorded
+    finally:
+        sys.setswitchinterval(old)
+    # sanity: all 18 appends are present
+    assert len(recorded) == 18
+    assert sorted(recorded) == sorted((n, i) for n in "ABC" for i in range(6))
+
+
+def test_threads_each_replay_their_own_boundary_calls(tmp_path):
+    """Each worker reads the clock on its own lane; replay feeds each thread its
+    own recorded values (per-thread cursors), and the lock order is reproduced."""
+    results = {}
+    lock = threading.Lock()
+
+    def worker(name):
+        stamp = round(time.time(), 6)
+        with lock:
+            results[name] = stamp
+
+    def program():
+        results.clear()
+        threads = [threading.Thread(target=worker, args=(n,)) for n in ("A", "B")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        return dict(results)
+
+    out = tmp_path / "threads2.flight"
+    with flight.deterministic(str(out), io_hash_above=0):
+        recorded = program()
+
+    replayed = flight.replay(str(out), program)
+    assert replayed == recorded  # each thread's recorded clock value came back

@@ -100,20 +100,23 @@ class AsyncioRecorder(_TaskOrder):
 
 
 class AsyncioReplayer(_TaskOrder):
-    """Observes the task-completion order and checks it against the recording."""
+    """Observes the task-completion order and checks it against the recording.
+
+    The recorded order is a scope-level *control* entry, pulled off the tape up
+    front (via `pop_control`) so it never sits in a per-thread cursor."""
 
     def __init__(self, tape):
         super().__init__()
-        self._tape = tape
+        payload = tape.pop_control(_ORDER_SOURCE)
+        self._expected = None if payload is None else json.loads(payload)
 
     def finalize(self) -> None:
-        if self._tape.peek_source() != _ORDER_SOURCE:
+        if self._expected is None:
             return
-        _tag, payload = self._tape.take_raw(_ORDER_SOURCE)
-        expected = json.loads(payload)
-        if self.completed != expected:
+        if self.completed != self._expected:
             raise ReplayDivergence(
                 "asyncio task completion order diverged from the recording: "
-                f"recorded {expected}, replayed {self.completed} — the scheduler "
-                "took a different path (an un-replayed source of non-determinism)"
+                f"recorded {self._expected}, replayed {self.completed} — the "
+                "scheduler took a different path (an un-replayed source of "
+                "non-determinism)"
             )

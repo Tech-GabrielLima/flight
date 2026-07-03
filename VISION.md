@@ -89,7 +89,7 @@ vêm redigidos por default.
 | 1.5 | Viewer | TUI navegável: frames → locals → grafo de objetos → código com valores inline | ✅ **concluída** |
 | 2 | Time-travel de escopo | `with flight.record():` grava escritas de estado; histórico por variável; "quem mutou" | ✅ **concluída** |
 | 3 | Re-execução | Repro automático verificado; replay determinístico (time/random/uuid/…) | ✅ **degraus 1–2** (degrau 3, threads: pesquisa) |
-| 4 | Fidelidade total de replay | Fechar o degrau 3: interpor arquivos/sockets/subprocess + **ordem** de locks/tasks (threads e asyncio) → replay multi-thread bit a bit | 🟡 **fatia 4a entregue** (arquivos/pipes/subprocess + asyncio; sockets/threads: próxima fatia) |
+| 4 | Fidelidade total de replay | Fechar o degrau 3: interpor arquivos/sockets/subprocess + **ordem** de locks/tasks (threads e asyncio) → replay multi-thread bit a bit | ✅ **concluída** (4a arquivos/pipes/subprocess + asyncio; 4b sockets + ordem de locks entre threads) |
 | 5 | Depurador reverso de verdade | *Step-backward* + "breakpoint no passado" sobre `state_at(seq)`; exposição via **DAP** (VS Code / PyCharm); granularidade sub-linha via bytecode nativo | 🔜 planejada |
 | 6 | Debugging por comparação | `flight diff a.flight b.flight` (primeira divergência) + **delta debugging** (ddmin sobre a fita → repro mínimo) | 🔜 planejada |
 | 7 | Camada de inteligência | `flight explain` (causa-raiz + patch por LLM), `flight repro --pytest`, query semântica na timeline, dedup por frame+estado | 🔜 planejada |
@@ -211,8 +211,23 @@ provavelmente um modo "grava só o que foi lido, com hash do resto" para concili
 > `io_hash_above=0` inlina tudo para replay 100% offline. Para **asyncio**, gravamos a **ordem de conclusão
 > das tasks** e a **verificamos** no replay (`_asyncio.py`): como o determinismo vem de reproduzir
 > tempo+I/O, a verificação detecta e aponta qualquer divergência de escalonamento residual (detector, ainda
-> não *impositor*). **Próxima fatia (4b):** sockets (`recv`/`recv_into`) e a imposição de ordem para
-> **threads reais** (lock/GIL) — o núcleo research da fase.
+> não *impositor*).
+>
+> **Fatia 4b — entregue.** Sockets (`recv`/`recv_into`) entram na fita como os demais reads (offline). E o
+> **núcleo research** foi implementado: **ordem de aquisição de locks entre threads** (`_threads.py`).
+> Threads são numeradas por ordem de início (`_flight_channel`; a thread do escopo = canal 0), e **cada
+> thread reproduz suas próprias chamadas de fronteira na sua própria trilha** da fita (cursores por-thread
+> em `Tape`, com o append da fita protegido por lock e a guarda de reentrância por-thread) — chamadas
+> concorrentes e não-sincronizadas (dois threads lendo o relógio) nunca disputam uma ordem global. A ordem
+> que **importa** — aquisição de locks — é gravada como uma sequência de canais e **imposta** no replay:
+> cada thread espera sua vez (a cabeça da sequência) antes de a aquisição prosseguir, reproduzindo o
+> **agendamento de locks** bit a bit (o clássico bug flaky de "qual thread ganhou"). **Honestidade:** só
+> locks criados **dentro** do escopo pelo código do usuário são rastreados (locks internos do runtime —
+> `threading`/`queue`/… — ficam intactos por um filtro de módulo-chamador, senão a própria sincronização do
+> interpretador travaria); aquisições **não-bloqueantes/com timeout** não são ordenadas; e **corridas de
+> dados sobre estado não-travado** ficam fora (genuinamente fora de qualquer record/replay baseado em
+> locks). Um timeout de segurança transforma um deadlock de replay em `ReplayDivergence`, nunca num
+> travamento (P1). Multiprocessing e a ordenação fina por-`await` do asyncio seguem como trabalho futuro.
 
 **Fase 5 — O depurador reverso de verdade.** Já temos `state_at(seq)` (event sourcing); falta a
 *experiência*: **step-backward**. Um viewer/DAP onde se anda para trás no tempo, coloca um "breakpoint no

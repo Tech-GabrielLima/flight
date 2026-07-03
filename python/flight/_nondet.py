@@ -28,10 +28,23 @@ import json
 import os
 import platform
 import sys
+import threading
 import uuid as _uuid
 from typing import Optional
 
 from . import _core
+
+
+def _current_channel() -> int:
+    """The recording *thread channel* of the calling thread (0 for the main
+    thread and any thread not started under a recording). Threads started inside
+    a `deterministic()`/`replay()` scope are numbered in start order by
+    :mod:`_threads`, which stamps the id on the Thread object; each thread then
+    records/replays its boundary calls on its own cursor, so concurrent,
+    unsynchronized calls (two threads reading the clock) never fight over one
+    global order. Cross-thread ordering that *does* matter — lock acquisition —
+    is handled separately, by replaying the recorded acquisition schedule."""
+    return getattr(threading.current_thread(), "_flight_channel", 0)
 
 
 class ReplayDivergence(RuntimeError):
@@ -124,7 +137,12 @@ class Tape:
 
     def __init__(self, entries):
         self._entries = list(entries)
-        self._cursor = 0
+        # Per-thread cursors, built lazily so `pop_control` can strip the
+        # scope-level control entries (asyncio/threads order) first. Each thread
+        # channel replays its own boundary calls in its own recorded order.
+        self._by_channel: Optional[dict[int, list[tuple[str, str]]]] = None
+        self._pos: dict[int, int] = {}
+        self._lock = threading.Lock()
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -142,25 +160,50 @@ class Tape:
     def sources(self) -> dict[str, int]:
         counts: dict[str, int] = {}
         for _s, src, _t, _p in self._entries:
-            counts[src] = counts.get(src, 0) + 1
+            _ch, real = _split_channel(src)
+            counts[real] = counts.get(real, 0) + 1
         return counts
 
+    def pop_control(self, source: str) -> Optional[str]:
+        """Remove and return the payload of a scope-level *control* entry (the
+        asyncio / thread ordering, written once when the scope closed). Called
+        before replay begins, so those entries never sit in a per-thread cursor.
+        Returns None if absent (the scope used no asyncio / threads)."""
+        for i, (_seq, src, _tag, payload) in enumerate(self._entries):
+            if src == source:
+                del self._entries[i]
+                return payload
+        return None
+
+    def _partition(self) -> dict[int, list[tuple[str, str]]]:
+        if self._by_channel is None:
+            table: dict[int, list[tuple[str, str]]] = {}
+            for _seq, src, tag, payload in self._entries:
+                ch, real = _split_channel(src)
+                table.setdefault(ch, []).append((real, tag, payload))
+            self._by_channel = table
+        return self._by_channel
+
     def _next(self, source: str) -> tuple[str, str]:
-        """Advance past the next entry, checking it was for `source`; return
-        its raw ``(tag, payload)``. Raises :class:`ReplayDivergence` on any
-        mismatch — the exact step where control flow left the recorded run."""
-        if self._cursor >= len(self._entries):
-            raise ReplayDivergence(
-                f"the recording is exhausted, but the code called {source!r} "
-                f"(step {self._cursor}) — control flow diverged from the recorded run"
-            )
-        _seq, src, tag, payload = self._entries[self._cursor]
-        if src != source:
-            raise ReplayDivergence(
-                f"at step {self._cursor}: the recording has {src!r} but the code "
-                f"called {source!r} — control flow diverged from the recorded run"
-            )
-        self._cursor += 1
+        """Advance past this thread's next entry, checking it was for `source`;
+        return its raw ``(tag, payload)``. Raises :class:`ReplayDivergence` on a
+        mismatch — the exact step where this thread left the recorded run."""
+        ch = _current_channel()
+        with self._lock:
+            lane = self._partition().get(ch, ())
+            pos = self._pos.get(ch, 0)
+            if pos >= len(lane):
+                raise ReplayDivergence(
+                    f"thread channel {ch}: the recording is exhausted, but the code "
+                    f"called {source!r} — control flow diverged from the recorded run"
+                )
+            real, tag, payload = lane[pos]
+            if real != source:
+                raise ReplayDivergence(
+                    f"thread channel {ch}, step {pos}: the recording has {real!r} "
+                    f"but the code called {source!r} — control flow diverged"
+                )
+            self._pos[ch] = pos + 1
         return tag, payload
 
     def take(self, source: str):
@@ -172,17 +215,25 @@ class Tape:
             raise _reconstruct_exc(payload)
         return _decode(tag, payload)
 
-    def peek_source(self) -> Optional[str]:
-        """The `source` of the next entry, or None if the tape is exhausted."""
-        if self._cursor >= len(self._entries):
-            return None
-        return self._entries[self._cursor][1]
-
     def take_raw(self, source: str) -> tuple[str, str]:
         """Like :meth:`take` but return the raw ``(tag, payload)`` — for I/O
         channels (`_io`) that own their own codec (bytes, text, hashed reads)
         and reconstruct richer objects than the scalar value codec."""
         return self._next(source)
+
+
+def _split_channel(src: str) -> tuple[int, str]:
+    """Parse a recorded source into ``(thread_channel, real_source)``. The main
+    thread (channel 0) records bare sources for backward compatibility; other
+    threads prefix ``@<channel>#``."""
+    if src.startswith("@"):
+        marker = src.find("#")
+        if marker != -1:
+            try:
+                return int(src[1:marker]), src[marker + 1 :]
+            except ValueError:
+                pass
+    return 0, src
 
 
 # -- interposition ----------------------------------------------------------
@@ -219,31 +270,43 @@ class _Recorder:
     def __init__(self):
         self.entries: list[tuple[int, str, str, str]] = []
         self._seq = 0
-        # Reentrancy guard: some boundaries call others internally (uuid4 uses
-        # os.urandom; subprocess.run reads pipes via os.read). We record only
-        # the *outermost* interposed call, so each boundary is atomic and replay
-        # — which short-circuits the outer call and never makes the inner one —
-        # sees the exact same tape. The guard is shared across the scalar
-        # boundaries here and the I/O channels in `_io` (one tape, one order).
-        self._depth = 0
+        # The tape append is shared across threads, so it is lock-guarded; the
+        # seq counter is the global order. The reentrancy guard, by contrast, is
+        # *per thread* (thread-local depth): some boundaries call others
+        # internally (uuid4 uses os.urandom; subprocess.run reads pipes via
+        # os.read), so we record only the *outermost* interposed call per thread
+        # — each boundary is atomic and replay, which short-circuits the outer
+        # call and never makes the inner one, sees the same per-thread lane. The
+        # guard is shared across the scalar boundaries here and the I/O channels
+        # in `_io`.
+        self._append_lock = threading.Lock()
+        self._tls = threading.local()
 
     def _record(self, source, tag, payload):
-        self.entries.append((self._seq, source, tag, payload))
-        self._seq += 1
+        ch = _current_channel()
+        if ch:
+            source = f"@{ch}#{source}"
+        with self._append_lock:
+            self.entries.append((self._seq, source, tag, payload))
+            self._seq += 1
 
     # -- shared guarded recording (used by scalar boundaries and by `_io`) ---
 
+    def _depth(self) -> int:
+        return getattr(self._tls, "depth", 0)
+
     def is_outermost(self) -> bool:
-        return self._depth == 0
+        return self._depth() == 0
 
     def enter(self) -> bool:
-        """Enter an interposed call; returns True if it is the outermost one."""
-        outermost = self._depth == 0
-        self._depth += 1
-        return outermost
+        """Enter an interposed call; returns True if it is the outermost one
+        *on this thread* (the reentrancy guard is per thread)."""
+        depth = self._depth()
+        self._tls.depth = depth + 1
+        return depth == 0
 
     def leave(self) -> None:
-        self._depth -= 1
+        self._tls.depth = self._depth() - 1
 
     def record_value(self, source, result) -> None:
         try:
@@ -296,14 +359,21 @@ class _Deterministic:
         hash_above = DEFAULT_IO_HASH_ABOVE if io_hash_above is None else io_hash_above
         self._io = None
         self._aio = None
+        self._threads = None
         if record_io:
             from ._io import IORecorder
             from ._asyncio import AsyncioRecorder
+            from ._threads import ThreadRecorder
 
             self._io = IORecorder(self._recorder, hash_above)
             self._aio = AsyncioRecorder(self._recorder)
+            self._threads = ThreadRecorder(self._recorder)
 
     def __enter__(self) -> "_Deterministic":
+        # Thread channels first (so any boundary recorded on a worker thread is
+        # tagged with the right lane), then the boundaries themselves.
+        if self._threads is not None:
+            self._threads.install()
         self._interposer.install()
         if self._io is not None:
             self._io.install()
@@ -315,6 +385,9 @@ class _Deterministic:
             self._io.uninstall()
             self._aio.uninstall()
         self._interposer.uninstall()
+        if self._threads is not None:
+            self._threads.uninstall()
+            self._threads.finalize()  # append the lock-acquisition order entry
         if self._aio is not None:
             self._aio.finalize()  # append the asyncio completion-order entry
         # If the block crashed, capture the crash black box *and* the tape into
@@ -421,10 +494,18 @@ def replay_tape(tape: Tape, fn, *args, **kwargs):
     step the code's calls leave the recorded order."""
     from ._io import IOReplayer
     from ._asyncio import AsyncioReplayer
+    from ._threads import ThreadReplayer
 
+    # Pull the scope-level control entries off the tape before it is partitioned
+    # into per-thread lanes.
+    order_payload = tape.pop_control("threads.order")
+    threads_order = json.loads(order_payload) if order_payload else None
+
+    threads = ThreadReplayer(threads_order)
     interposer = _Interposer(lambda source, orig: _replay_wrapper(tape, source))
     io = IOReplayer(tape)
-    aio = AsyncioReplayer(tape)
+    aio = AsyncioReplayer(tape)  # pops asyncio.order in __init__
+    threads.install()  # number threads + gate lock acquisitions before fn runs
     interposer.install()
     io.install()
     aio.install()
@@ -436,6 +517,7 @@ def replay_tape(tape: Tape, fn, *args, **kwargs):
         io.uninstall()
         aio.uninstall()
         interposer.uninstall()
+        threads.uninstall()
 
 
 def _replay_wrapper(tape: Tape, source: str):

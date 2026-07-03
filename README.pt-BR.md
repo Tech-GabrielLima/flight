@@ -84,14 +84,16 @@ preservados; objetos opacos viram stubs), embute a fonte, chama a função e con
 num bloco NONDET, e `flight.replay(path, fn)` reexecuta bit a bit; `ReplayDivergence` aponta onde o fluxo
 divergiu. *Convergência:* um crash dentro de `deterministic()` grava frames **e** a fita no mesmo arquivo,
 e o `repro` tece a fita no script — **reproduzindo um crash flaky de tempo/aleatoriedade deterministicamente**.
-Degrau 3 (threads) é pesquisa: replay garantido single-thread/asyncio. **Fatia 4a entregue:**
-`flight.deterministic()` também grava **o que o código leu** — arquivos (texto/binário,
-`read`/`readline`/`readinto`/iteração), pipes (`os.read`) e saída de subprocessos
-(`subprocess.run`/`check_output`) — como entradas na mesma fita, com canal por ordem de `open`. O replay é
+**Fase 4 — fidelidade total de replay (concluída).** `flight.deterministic()` também grava **o que o código
+leu** — arquivos (texto/binário, `read`/`readline`/`readinto`/iteração), pipes (`os.read`), saída de
+subprocessos (`subprocess.run`/`check_output`) e sockets (`recv`/`recv_into`) — na mesma fita. O replay é
 **offline** (leituras vêm da fita; escritas são engolidas). Leituras acima de `io_hash_above` (256 KiB por
 padrão) viram *comprimento + digest BLAKE2b* e são **verificadas** contra a fonte viva no replay;
-`io_hash_above=0` inlina tudo. Para asyncio, a **ordem de conclusão das tasks** é gravada e verificada no
-replay. Sockets e ordenação de **threads reais** são a próxima fatia (4b).
+`io_hash_above=0` inlina tudo. Para asyncio, a **ordem de conclusão das tasks** é gravada e verificada. Para
+**threads**, a **ordem de aquisição de locks** é gravada e **imposta** no replay (threads numeradas por
+ordem de início, cada uma com sua trilha da fita) — reproduz o bug flaky de "qual thread ganhou" bit a bit.
+Honestidade: só locks do usuário criados no escopo; aquisições não-bloqueantes/com timeout não são
+ordenadas; corridas sobre estado não-travado e multiprocessing ficam fora.
 
 ## Roadmap adiante — Fases 4–10
 
