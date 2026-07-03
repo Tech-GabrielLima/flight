@@ -5,7 +5,12 @@ edition.workspace = true
 license.workspace = true
 description = "Parser and query API for .flight files. Tolerates truncated files and skips unknown blocks."
 
+[features]
+default = ["c-zstd"]
+c-zstd = ["flight-format/c-zstd"]
+pure-zstd = ["flight-format/pure-zstd"]
+
 [dependencies]
-flight-format = { path = "../flight-format" }
+flight-format = { path = "../flight-format", default-features = false }
 serde = { workspace = true }
 rmp-serde = { workspace = true }

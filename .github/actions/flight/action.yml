@@ -1,0 +1,56 @@
+name: "Flight — root cause on a red CI"
+description: >
+  Turn the .flight black boxes a failed run left behind into a root-cause
+  summary on the job, and optionally a comment on the pull request. Wraps the
+  `flight ci` command (which is unit-tested); this action is just the plumbing.
+author: "Gabriel Lima"
+
+inputs:
+  flight-dir:
+    description: "Directory that holds the .flight files (e.g. what `pytest --flight` wrote)."
+    required: false
+    default: ".flight"
+  comment:
+    description: "Post the root cause as a pull-request comment (needs a token with write access)."
+    required: false
+    default: "false"
+  upload-artifact:
+    description: "Upload the .flight files as a build artifact so they can be downloaded and replayed."
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Render the Flight root cause
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        FLIGHT_DIR: ${{ inputs.flight-dir }}
+        FLIGHT_COMMENT: ${{ inputs.comment }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        set -euo pipefail
+        if ! ls "$FLIGHT_DIR"/*.flight >/dev/null 2>&1; then
+          echo "flight: no .flight files under '$FLIGHT_DIR' — nothing to report."
+          exit 0
+        fi
+        # `flight ci` picks the newest crash in the directory and renders Markdown.
+        python -m flight ci "$FLIGHT_DIR" -o flight-comment.md
+        {
+          echo "## ✈️ Flight recorded a crash"
+          echo
+          cat flight-comment.md
+        } >> "$GITHUB_STEP_SUMMARY"
+        if [ "$FLIGHT_COMMENT" = "true" ] && [ -n "${PR_NUMBER:-}" ] && command -v gh >/dev/null 2>&1; then
+          gh pr comment "$PR_NUMBER" --body-file flight-comment.md || \
+            echo "flight: could not post PR comment (needs a token with pull-requests: write)."
+        fi
+
+    - name: Upload the .flight black boxes
+      if: ${{ inputs.upload-artifact == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: flight-black-boxes
+        path: ${{ inputs.flight-dir }}/*.flight
+        if-no-files-found: ignore

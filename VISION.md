@@ -94,7 +94,7 @@ vêm redigidos por default.
 | 6 | Debugging por comparação | `flight diff a.flight b.flight` (primeira divergência) + **delta debugging** (ddmin sobre a fita → repro mínimo) | ✅ **concluída** (`flight diff` + `flight.minimize` via ddmin) |
 | 7 | Camada de inteligência | `flight explain` (causa-raiz + patch por LLM), `flight repro --pytest`, query semântica na timeline, dedup por frame+estado | ✅ **concluída** (explain heurístico+prompt LLM, repro --pytest, `len(x)>N`, fingerprint) |
 | 8 | Caixa-preta de produção | Governador adaptativo de overhead (SLO), daemon always-on + flush no crash (sobrevive a SIGKILL/OOM), correlação distribuída (OpenTelemetry) | ✅ **concluída** (governador SLO retunando a granularidade ao vivo; supervisor que promove o último checkpoint após `kill -9`; correlação W3C `traceparent` + `flight trace`) |
-| 9 | Laço viral e ecossistema | Viewer no browser (reader Rust → WASM), plugin pytest, GitHub Action, middleware Django/FastAPI/Flask, recorders cross-language, cripto em repouso | 🚧 **parcial** (plugin pytest `pytest --flight` ✅ + cripto em repouso AES-256-GCM `flight encrypt/decrypt` ✅; viewer WASM/middleware/GH Action/recorders cross-lang = pendentes) |
+| 9 | Laço viral e ecossistema | Viewer no browser (reader Rust → WASM), plugin pytest, GitHub Action, middleware Django/FastAPI/Flask, recorders cross-language, cripto em repouso | ✅ **concluída** (viewer WASM offline, plugin `pytest --flight`, `flight ci` + GitHub Action, middleware WSGI/ASGI, recorders Go+Node no mesmo formato, cripto AES-256-GCM) |
 | 10 | Moonshots | *What-if debugging*: editar um valor no passado e re-executar dali sobre a fita determinística — resultado contrafactual | 🔜 planejada |
 
 ### 5.1 Definição de "pronto" da Fase 0
@@ -347,7 +347,7 @@ atrito:
 - **Segurança que vira feature:** criptografia opcional em repouso (o arquivo tem valores mesmo pós-scrub),
   para mandar um crash a um fornecedor sem vazar nada.
 
-> **Entregue (Fase 9, parcial — 2 de 6).** **Plugin pytest** (`_pytest.py`, registrado como entry point
+> **Entregue (Fase 9, completa).** **Plugin pytest** (`_pytest.py`, registrado como entry point
 > `pytest11` → auto-descoberto): opt-in por `pytest --flight`, um hookwrapper em `pytest_runtest_call` grava
 > cada teste sob o Flight e, na falha, escreve um `.flight` de captura completa nomeado pelo node id
 > (`--flight-dir`, default `.flight/`), expondo o caminho no relatório da falha e no resumo do terminal;
@@ -359,11 +359,21 @@ atrito:
 > `hashlib`), AEAD por **AES-256-GCM** (confidencialidade + detecção de adulteração), header ligado como
 > associated data; `flight decrypt` reverte, senha errada / truncamento / bit flipado → `DecryptError`. AEAD
 > exige o pacote **`cryptography`** (extra `[crypto]`); o KDF e o enquadramento são stdlib e sempre testáveis,
-> e sem o pacote as funções levantam um `CryptoUnavailable` claro. **Escopo honesto:** feito 2 de 6 desta
-> fase; **viewer WASM** (precisa de um decode zstd em Rust puro antes — o dep atual é zstd C, que não compila
-> limpo p/ wasm32), **middleware WSGI/ASGI**, **GitHub Action** e **recorders cross-language (Go/Node)**
-> ficam pendentes. Testes: `tests/test_ecosystem.py` (14; o round-trip AEAD roda quando `cryptography` está
-> presente, senão pula limpo).
+> e sem o pacote as funções levantam um `CryptoUnavailable` claro. **Viewer no browser (WASM)** — o
+> `flight-reader` compilado para `wasm32`: como o `zstd` do reader é dep C que não vai p/ wasm, o decode passa
+> a usar **`ruzstd`** (Rust puro) atrás da feature `pure-zstd` (o writer/encoder fica só na feature `c-zstd`),
+> e um crate `flight-wasm` (cdylib) expõe um **ABI C cru** (`alloc`/`parse`/`dealloc`, retornando JSON com
+> prefixo de tamanho) — sem wasm-bindgen, sem bundler. `scripts/build-wasm.sh` embute o `.wasm` como base64
+> num único `viewer-wasm/index.html` **offline** (arrasta o `.flight` do `file://`, nada sobe, nada instala).
+> **Middleware WSGI/ASGI** (`_web.py`): `FlightWSGI`/`FlightASGI` gravam um `.flight` por 500 com o contexto
+> de trace da request (passado por-request, thread-safe), **agnóstico de framework** (fala os protocolos, não
+> a API de nenhum). **`flight ci`** (`_ci.py`) + **GitHub Action** (`.github/actions/flight`): renderiza um
+> comentário Markdown de causa-raiz (reusa `explain` + `fingerprint`) p/ o job summary / comentário de PR.
+> **Recorders cross-language** (`recorders/go`, `recorders/node`): escrevem o **mesmo** formato `.flight` —
+> msgpack à mão + um **frame zstd "stored"** (blocos raw, zstd válido sem compressor) → **zero dependências**,
+> lidos de volta pelo reader Rust/Python. **Escopo honesto:** o round-trip AEAD e os testes Go/Node/WASM
+> pulam limpo quando o toolchain (cryptography/go/node/wasm) falta. Testes: `tests/test_ecosystem.py` (plugin/
+> crypto/middleware/ci) + `tests/test_polyglot.py` (Go/Node/WASM).
 
 **Fase 10 — Moonshot: What-if debugging.** Já que reconstruímos estado em qualquer `seq`, permitir **editar
 um valor no passado e re-executar dali para a frente** sobre a fita determinística: "e se `numbers` não

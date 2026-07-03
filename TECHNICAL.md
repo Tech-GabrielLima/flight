@@ -272,25 +272,29 @@ Fase 8   ✅ produção. TUDO Python puro (correlação na fita NONDET; dump rin
             (superestima em N cores = seguro p/ SLO); checkpoint periódico (kill duro perde ≤1 intervalo);
             supervisor-sobre-checkpoint, não ring em shm lido ao vivo (futuro). Testes: test_production.py
             (28, incl. SIGKILL num filho real recuperando o black box).
-Fase 9   🚧 ecossistema (parcial, 2 de 6). Plugin pytest (_pytest.py, entry point pytest11): opt-in
-            --flight, hookwrapper em pytest_runtest_call grava cada teste sob o Flight, na falha
-            (outcome.excinfo) escreve .flight completo nomeado pelo node id (--flight-dir/--flight-lines/
-            --flight-all), path no relatório+summary; nunca muda o resultado (P1, gravação embrulhada).
-            Cripto em repouso (_crypto.py): envelope FLGTENC1|salt(16)|nonce(12)|ct+tag, KDF scrypt (stdlib
-            hashlib, maxmem explícito), AEAD AES-256-GCM (cryptography, extra [crypto]); header como AAD;
-            senha errada/trunc/tamper → DecryptError; sem cryptography → CryptoUnavailable claro (KDF+
-            enquadramento stdlib sempre testáveis). CLI encrypt/decrypt (--passphrase/$FLIGHT_PASSPHRASE/
-            prompt). PENDENTE: viewer WASM (precisa decode zstd Rust-puro; dep atual = zstd C, não compila
-            p/ wasm32), middleware WSGI/ASGI, GitHub Action, recorders cross-lang (Go/Node). Testes:
-            test_ecosystem.py (14; round-trip AEAD roda se cryptography presente, senão pula).
+Fase 9   ✅ ecossistema (completa, 6 de 6). Plugin pytest (_pytest.py, entry point pytest11): --flight,
+            hookwrapper em pytest_runtest_call, na falha (outcome.excinfo) escreve .flight completo nomeado
+            pelo node id; nunca muda o resultado (P1). Cripto (_crypto.py): envelope FLGTENC1|salt|nonce|
+            ct+tag, KDF scrypt (stdlib, maxmem explícito), AEAD AES-256-GCM (cryptography, extra [crypto]);
+            sem o pacote → CryptoUnavailable. Viewer WASM: flight-format ganhou features c-zstd (encoder+
+            decoder C, default) / pure-zstd (decoder ruzstd, Rust puro); writer só em c-zstd; flight-reader
+            propaga as features; crate flight-wasm (cdylib, workspace próprio) expõe ABI C cru alloc/parse/
+            dealloc (JSON com prefixo u32 de tamanho), buildado p/ wasm32 sem wasm-bindgen; scripts/
+            build-wasm.sh embute o .wasm base64 em viewer-wasm/index.html (offline, file://). Middleware
+            (_web.py): FlightWSGI/FlightASGI, .flight por 500 com trace da request passado por-request
+            (capture ganhou arg correlation, thread-safe), agnóstico de framework. flight ci (_ci.py) +
+            .github/actions/flight: comentário Markdown de causa-raiz (reusa explain+fingerprint). Recorders
+            recorders/go + recorders/node: mesmo formato, msgpack à mão + frame zstd "stored" (blocos raw =
+            zstd válido sem compressor) → zero deps, lidos pelo reader Rust. Testes: test_ecosystem.py
+            (plugin/crypto/middleware/ci) + test_polyglot.py (Go/Node/WASM; pulam sem o toolchain).
 Fase 5   🔜 depurador reverso: step-backward + breakpoint no passado sobre state_at(seq);
             bytecode nativo (§3.2) p/ sub-linha; exposição via DAP (VS Code/PyCharm).
 Fase 6   🔜 flight diff (primeira divergência) + delta debugging (ddmin sobre a fita).
 Fase 7   🔜 inteligência: flight explain (LLM), repro --pytest, query semântica, dedup frame+estado.
 Fase 8   ✅ produção (ver bloco acima): governador de overhead (SLO), supervisor + flush no crash
             (sobrevive SIGKILL/OOM), correlação distribuída (W3C traceparent / OpenTelemetry) + flight trace.
-Fase 9   🚧 ecossistema (ver bloco acima): ✅ plugin pytest + cripto em repouso; 🔜 viewer WASM, GitHub
-            Action, middleware web, recorders cross-language.
+Fase 9   ✅ ecossistema (ver bloco acima): viewer WASM offline, plugin pytest, flight ci + GitHub Action,
+            middleware WSGI/ASGI, recorders Go+Node no mesmo formato, cripto em repouso.
 Fase 10  🔜 moonshot: what-if debugging (editar valor no passado e re-executar dali sobre a fita).
 ```
 

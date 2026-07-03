@@ -1,0 +1,37 @@
+# Example: record a black box for every failing test and, when the run is red,
+# post the root cause to the job summary (and, on a PR, as a comment).
+#
+# This is a template — copy the relevant steps into your own CI. The key pieces
+# are (1) `pytest --flight` so failures leave a `.flight`, and (2) the Flight
+# action to turn them into a root-cause summary.
+name: tests
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+  pull-requests: write   # only needed if you set `comment: true`
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install
+        run: pip install flight-recorder pytest
+
+      - name: Run tests (record a .flight for each failure)
+        run: pytest --flight --flight-dir=.flight
+        # keep going so the root-cause step still runs on failure
+        continue-on-error: true
+
+      - name: Flight root cause
+        if: always()
+        uses: ./.github/actions/flight
+        with:
+          flight-dir: .flight
+          comment: "true"

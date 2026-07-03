@@ -69,12 +69,12 @@ Three bets underpin the project (see [VISION.md](VISION.md)):
 **It is** a scoped, post-mortem recorder with a first-class viewer, evolving toward time-travel
 debugging. **It is not** an APM, a live debugger (that's `pdb`), or a profiler.
 
-## Status — Phase 8 complete; Phase 9 in progress
+## Status — Phase 9 (the ecosystem) ✅
 
-Phases 0 through 8 are complete, end to end and fully tested. Phase 9 (the ecosystem) is a basket of
-integrations being delivered piece by piece — **shipped so far: a pytest plugin and at-rest encryption**
-(see [the ecosystem](#the-ecosystem--phase-9) below); the browser WASM viewer, web middleware, a GitHub
-Action and cross-language recorders are still ahead.
+Every phase through 9 is complete, end to end and fully tested. Phase 9 removed the friction around the
+shareable `.flight`: a **browser WASM viewer**, a **pytest plugin**, **`flight ci`** + a **GitHub Action**,
+framework-agnostic **WSGI/ASGI middleware**, **Go and Node recorders** writing the same format, and at-rest
+**encryption** (see [the ecosystem](#the-ecosystem--phase-9) below).
 
 Every phase through 8: 0 (foundation), 1 (the full black box),
 1.5 (the TUI viewer), 2 (scoped time-travel), 3 (rungs 1–2 of re-execution), 4 (deterministic I/O +
@@ -476,9 +476,33 @@ $ python -m flight decrypt crash.flight.enc --passphrase "$KEY"
 
 AES-GCM needs a real cipher, so this depends on the **`cryptography`** package
 (`pip install 'flight-recorder[crypto]'`); without it the commands fail with a clear message rather than
-obscurely (the scrypt KDF and the envelope framing are stdlib-only). Still ahead in Phase 9: the browser
-**WASM viewer** (needs a pure-Rust zstd decode path first — the reader's zstd is a C dependency that won't
-target `wasm32` cleanly), **WSGI/ASGI middleware**, a **GitHub Action**, and **cross-language recorders**.
+obscurely (the scrypt KDF and the envelope framing are stdlib-only).
+
+**A viewer in the browser — the growth loop.** The `.flight` is shareable, so it should be openable with
+nothing installed. The Rust `flight-reader` is compiled to **WebAssembly** and dropped into a single
+self-contained HTML page: drag a `.flight` on and it's parsed **in your browser**, offline, nothing
+uploaded. The reader's zstd is a C dependency that can't target `wasm32`, so the decode path swaps to the
+pure-Rust **`ruzstd`** behind a `pure-zstd` feature (the encoder stays on the native `c-zstd` feature); a
+small `flight-wasm` crate exposes a **raw C ABI** (`alloc` / `parse` / `dealloc`), so the page needs no
+wasm-bindgen, no bundler — just the standard `WebAssembly` API. `scripts/build-wasm.sh` inlines the `.wasm`
+as base64 into [`viewer-wasm/index.html`](viewer-wasm/), which then works straight from `file://`.
+
+**A `.flight` per HTTP 500.** `flight._web` provides **framework-agnostic** middleware — `FlightWSGI` (Flask,
+Django, Pyramid…) and `FlightASGI` (FastAPI, Starlette, Quart…) — because it speaks the WSGI/ASGI protocols,
+not any one framework's API. A request that raises leaves a full black box, tagged with the request's
+`traceparent` (passed per-request, so concurrent requests never clobber each other), before the exception
+reaches the framework's error handling.
+
+**Root cause on a red CI.** `flight ci` renders a Markdown root-cause comment from a crash `.flight` (reusing
+the `explain` heuristics and the fingerprint); the composite **GitHub Action** in
+[`.github/actions/flight`](.github/actions/flight) drops it into the job summary and, optionally, a PR
+comment, and uploads the `.flight` as an artifact.
+
+**The format is language-agnostic — so recorders aren't Python-only.** [`recorders/go`](recorders/) and
+[`recorders/node`](recorders/) write the **same** `.flight` format from Go and Node, read back unchanged by
+the Rust/Python reader (`flight inspect`, the WASM viewer, everything). Both are **dependency-free**: a tiny
+hand-rolled msgpack encoder, and a "stored" zstd frame (a valid zstd stream of raw, uncompressed blocks) so
+no compressor is needed. One black-box format across a polyglot system.
 
 ## Roadmap ahead — Phases 4–10
 
@@ -509,11 +533,10 @@ The compass: **fidelity → experience → intelligence → reach**. Every phase
   not a bet), an **always-on daemon** that flushes on `SIGKILL`/OOM via an external supervisor (a black box
   that survives the plane), and **distributed correlation** (W3C `traceparent` / OpenTelemetry) for
   cross-service crashes. See [the production black box](#the-production-black-box--phase-8) above.
-- **Phase 9 — The viral loop & ecosystem. 🚧 In progress.** Shipped: a **pytest plugin** (`pytest --flight`
-  attaches a black box to each failing test) and optional **at-rest encryption** (`flight encrypt`,
-  AES-256-GCM). Ahead: a **browser viewer** (the Rust reader compiled to **WASM**), a **GitHub Action**,
-  WSGI/ASGI **middleware**, and **cross-language recorders** writing the same `.flight`. See
-  [the ecosystem](#the-ecosystem--phase-9) above.
+- **Phase 9 — The viral loop & ecosystem. ✅ Done.** A **browser viewer** (the Rust reader compiled to
+  **WASM**, offline single-file page), a **pytest plugin** (`pytest --flight`), **`flight ci`** + a **GitHub
+  Action** for red CI, framework-agnostic WSGI/ASGI **middleware**, **Go and Node recorders** writing the
+  same `.flight`, and optional at-rest **encryption**. See [the ecosystem](#the-ecosystem--phase-9) above.
 - **Phase 10 — Moonshot: what-if debugging.** Edit a value in the past and re-execute forward over the
   deterministic tape: "what if `numbers` weren't empty here?" — the counterfactual result. Event sourcing +
   tape make it feasible.
@@ -562,6 +585,7 @@ python -m flight fingerprint crash.flight                    # dedup id (by fram
 python -m flight run --slo 0.03 --daemon service.py          # overhead SLO + survive kill -9 / OOM
 python -m flight trace ./crashes                             # cross-service crash graph (by trace id)
 python -m flight encrypt crash.flight --passphrase "$KEY"    # seal at rest (needs the [crypto] extra)
+python -m flight ci .flight                                  # Markdown root-cause comment for CI
 pytest --flight                                              # a .flight for every failing test (plugin)
 ```
 
@@ -682,9 +706,15 @@ python/flight/
   _correlation.py  W3C trace context + cross-service crash graph (Phase 8)
   _pytest.py       pytest plugin: a .flight per failing test (Phase 9)
   _crypto.py       at-rest encryption of a .flight (AES-256-GCM, optional) (Phase 9)
+  _web.py          WSGI/ASGI middleware: a .flight per HTTP 500 (Phase 9)
+  _ci.py           flight ci: a Markdown root-cause comment for CI (Phase 9)
   _read.py, _cli.py, _config.py
-tests/             Python tests (serializer, capture, reader, CLI)
-scripts/bench.py   overhead baseline
+crates/flight-wasm/  the reader compiled to WebAssembly (raw C ABI) (Phase 9)
+viewer-wasm/       self-contained offline browser viewer (built by scripts/build-wasm.sh)
+recorders/go, recorders/node   cross-language recorders writing the same .flight (Phase 9)
+.github/actions/flight          GitHub Action: root cause on a red CI (Phase 9)
+tests/             Python tests (serializer, capture, reader, CLI, ecosystem, polyglot)
+scripts/bench.py   overhead baseline · scripts/build-wasm.sh  build the WASM viewer
 ```
 
 ## License

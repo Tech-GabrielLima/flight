@@ -29,6 +29,9 @@ mod event;
 mod header;
 mod mutation;
 mod nondet;
+// The writer needs a zstd *encoder*, so it lives with the C-backed feature.
+// Pure-`ruzstd` builds (the wasm reader) are decode-only and don't include it.
+#[cfg(feature = "c-zstd")]
 mod writer;
 
 pub use block::{BlockType, IndexEntry, MetaBlock, RingPayload};
@@ -38,6 +41,7 @@ pub use event::{CodeInfo, Event, EventKind};
 pub use header::HeaderMeta;
 pub use mutation::{Mutation, MutationValue};
 pub use nondet::NonDetEvent;
+#[cfg(feature = "c-zstd")]
 pub use writer::FlightWriter;
 
 /// File magic, first 4 bytes of every `.flight` file.
@@ -65,12 +69,30 @@ pub fn from_msgpack<'a, T: serde::Deserialize<'a>>(bytes: &'a [u8]) -> Result<T,
     rmp_serde::from_slice(bytes).map_err(|e| FormatError::Decode(e.to_string()))
 }
 
-/// Compress a block payload.
+/// Compress a block payload. Only available with the C-backed `c-zstd` feature
+/// (the writer path); pure-`ruzstd` builds are decode-only.
+#[cfg(feature = "c-zstd")]
 pub fn compress(bytes: &[u8]) -> Result<Vec<u8>, FormatError> {
     zstd::encode_all(bytes, ZSTD_LEVEL).map_err(|e| FormatError::Encode(e.to_string()))
 }
 
-/// Decompress a block payload.
+/// Decompress a block payload. Uses the C zstd when present (fast path), else
+/// the pure-Rust `ruzstd` decoder (e.g. on wasm32). Both read the exact same
+/// zstd stream — including the "stored" raw-block frames the cross-language
+/// recorders emit.
+#[cfg(feature = "c-zstd")]
 pub fn decompress(bytes: &[u8]) -> Result<Vec<u8>, FormatError> {
     zstd::decode_all(bytes).map_err(|e| FormatError::Decode(e.to_string()))
+}
+
+#[cfg(all(not(feature = "c-zstd"), feature = "pure-zstd"))]
+pub fn decompress(bytes: &[u8]) -> Result<Vec<u8>, FormatError> {
+    use std::io::Read;
+    let mut decoder = ruzstd::decoding::StreamingDecoder::new(bytes)
+        .map_err(|e| FormatError::Decode(e.to_string()))?;
+    let mut out = Vec::new();
+    decoder
+        .read_to_end(&mut out)
+        .map_err(|e| FormatError::Decode(e.to_string()))?;
+    Ok(out)
 }

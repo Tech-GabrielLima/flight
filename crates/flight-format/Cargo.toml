@@ -5,7 +5,17 @@ edition.workspace = true
 license.workspace = true
 description = "The .flight file format: block layout, event records and (de)serialization primitives."
 
+[features]
+# The C-backed zstd (encode + decode) — used by the recorder and every native
+# build. On by default.
+default = ["c-zstd"]
+c-zstd = ["dep:zstd"]
+# A pure-Rust zstd *decoder* (ruzstd), for targets the C library can't reach —
+# notably wasm32 for the browser viewer. Read-only: `compress` is unavailable.
+pure-zstd = ["dep:ruzstd"]
+
 [dependencies]
 serde = { workspace = true }
 rmp-serde = { workspace = true }
-zstd = { workspace = true }
+zstd = { workspace = true, optional = true }
+ruzstd = { version = "0.8", optional = true }

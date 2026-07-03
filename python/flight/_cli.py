@@ -286,6 +286,26 @@ def _cmd_trace(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ci(args: argparse.Namespace) -> int:
+    """Render a Markdown root-cause comment for a crash `.flight` (for CI)."""
+    from ._ci import render_comment
+
+    target = Path(args.file)
+    if target.is_dir():
+        crashes = sorted(target.glob("*.flight"), key=lambda p: p.stat().st_mtime, reverse=True)
+        picked = next((p for p in crashes if read(p).has_crash), None)
+        if picked is None:
+            print("no crash .flight found in that directory", file=sys.stderr)
+            return 1
+        target = picked
+    md = render_comment(target)
+    if args.output:
+        Path(args.output).write_text(md + "\n")
+    else:
+        print(md)
+    return 0
+
+
 def _passphrase(args) -> str:
     """Resolve a passphrase from --passphrase, $FLIGHT_PASSPHRASE, or a prompt."""
     import os
@@ -432,6 +452,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     tr.add_argument("paths", nargs="+", help="`.flight` files or directories to scan")
     tr.set_defaults(func=_cmd_trace)
+
+    ci = sub.add_parser("ci", help="render a Markdown root-cause comment for a crash (for CI)")
+    ci.add_argument("file", help="a crash .flight file, or a directory to pick the newest from")
+    ci.add_argument("-o", "--output", help="write the Markdown here (default: stdout)")
+    ci.set_defaults(func=_cmd_ci)
 
     enc = sub.add_parser("encrypt", help="encrypt a .flight at rest (AES-256-GCM; [crypto] extra)")
     enc.add_argument("file", help="path to the .flight file")

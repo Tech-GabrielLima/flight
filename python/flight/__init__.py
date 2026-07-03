@@ -54,6 +54,7 @@ from ._nondet import ReplayDivergence, Tape, deterministic, replay, replay_tape
 from ._read import Crash, Flight, Frame, Mutation, Recording, read
 from ._record import record, watch
 from ._timetravel import Step, TimeTravel
+from ._web import FlightASGI, FlightWSGI
 
 __version__ = "0.0.1"
 
@@ -67,6 +68,8 @@ __all__ = [
     "Divergence",
     "Explanation",
     "Flight",
+    "FlightASGI",
+    "FlightWSGI",
     "Frame",
     "Link",
     "MinimizeResult",
@@ -131,7 +134,7 @@ def stats() -> dict:
     return dict(_core.stats())
 
 
-def capture(path=None):
+def capture(path=None, *, correlation=None):
     """Write a `.flight` *now*, without waiting for an uncaught exception.
 
     If called while handling an exception, it captures the **full** black box
@@ -152,4 +155,4 @@ def capture(path=None):
     from ._install import _active
 
     config = _active.config if _active is not None else Config()
-    return _capture(config, path)
+    return _capture(config, path, correlation=correlation)

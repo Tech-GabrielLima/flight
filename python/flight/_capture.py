@@ -27,20 +27,24 @@ from ._scrub import DEFAULT_PATTERNS, Scrubber
 from ._serialize import GraphSerializer
 
 
-def write_crash_flight(exc_type, exc_value, exc_tb, config: Config, path=None) -> Optional[Path]:
-    """Write a full crash `.flight`. Returns the path, or `None` on any failure."""
+def write_crash_flight(exc_type, exc_value, exc_tb, config: Config, path=None, correlation=None) -> Optional[Path]:
+    """Write a full crash `.flight`. Returns the path, or `None` on any failure.
+
+    `correlation` overrides `config.correlation` for this one capture — the
+    thread-safe way to stamp a per-request trace context (P8) without mutating
+    global state, which is what the web middleware needs."""
     try:
-        return _capture(exc_value, exc_tb, config, path)
+        return _capture(exc_value, exc_tb, config, path, correlation=correlation)
     except BaseException:
         return None
 
 
-def capture(config: Config, path=None) -> Optional[Path]:
+def capture(config: Config, path=None, correlation=None) -> Optional[Path]:
     """Capture the *currently handled* exception if there is one, else fall back
     to a ring-only dump of the current state."""
     exc_type, exc_value, exc_tb = sys.exc_info()
     if exc_value is not None and exc_tb is not None:
-        return write_crash_flight(exc_type, exc_value, exc_tb, config, path)
+        return write_crash_flight(exc_type, exc_value, exc_tb, config, path, correlation=correlation)
     from ._install import dump  # ring-only
 
     return dump(path, config=config)
@@ -102,7 +106,7 @@ def build_payload(exc_value, exc_tb, config: Config):
     return source_tuples, exc_tuples, frame_tuples, objects
 
 
-def _capture(exc_value, exc_tb, config: Config, path, nondet=None) -> Optional[Path]:
+def _capture(exc_value, exc_tb, config: Config, path, nondet=None, correlation=None) -> Optional[Path]:
     source_tuples, exc_tuples, frame_tuples, objects = build_payload(exc_value, exc_tb, config)
 
     from . import __version__
@@ -111,9 +115,10 @@ def _capture(exc_value, exc_tb, config: Config, path, nondet=None) -> Optional[P
         path = config.crash_path(pid=os.getpid(), when_ms=int(time.time() * 1000))
     # Phase-8: stamp the distributed-trace context onto the crash so it can be
     # navigated across services. Correlation rides the NONDET tape alongside any
-    # deterministic-replay entries (both are read back by source name).
+    # deterministic-replay entries (both are read back by source name). An
+    # explicit `correlation` (from the web middleware) wins over the global one.
     nondet_all = list(nondet or [])
-    ctx = getattr(config, "correlation", None)
+    ctx = correlation if correlation is not None else getattr(config, "correlation", None)
     if ctx is not None:
         try:
             nondet_all.extend(ctx.to_nondet())

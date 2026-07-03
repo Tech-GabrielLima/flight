@@ -1,6 +1,10 @@
 # Rust
 /target
+crates/flight-wasm/target/
 **/*.rs.bk
+
+# Node recorder
+node_modules/
 
 # Python
 __pycache__/

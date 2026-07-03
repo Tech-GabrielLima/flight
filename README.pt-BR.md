@@ -141,16 +141,18 @@ calibrado (single-thread; superestima em muitos cores, seguro para um SLO); o ch
 kill duro pode perder até um intervalo dos últimos eventos); é supervisor-sobre-checkpoint, não ainda um
 ring em memória compartilhada lido ao vivo (refino futuro).
 
-**Fase 9 — ecossistema (parcial, 2 de 6).** **Plugin pytest** (`_pytest.py`, entry point `pytest11` →
-auto-descoberto): opt-in por `pytest --flight`, um hookwrapper grava cada teste sob o Flight e, na falha,
-escreve um `.flight` de captura completa nomeado pelo node id (`--flight-dir`/`--flight-lines`/`--flight-all`),
-mostrando o caminho no relatório da falha e no resumo — e nunca muda o resultado do teste (P1). **Cripto em
-repouso** (`_crypto.py`): `flight encrypt`/`flight.encrypt_file` sela o `.flight` num envelope
-`FLGTENC1|salt|nonce|ciphertext+tag` — chave por **scrypt** (stdlib), AEAD por **AES-256-GCM** (senha errada/
-adulteração → `DecryptError`); `flight decrypt` reverte. AEAD precisa do pacote `cryptography` (extra
-`[crypto]`); KDF+enquadramento são stdlib e sempre testáveis, e sem o pacote as funções levantam
-`CryptoUnavailable` claro. Pendentes nesta fase: viewer WASM (precisa de decode zstd em Rust puro antes),
-middleware WSGI/ASGI, GitHub Action, recorders cross-language (Go/Node).
+**Fase 9 — ecossistema (concluída).** **Plugin pytest** (`_pytest.py`, entry point `pytest11`): `pytest
+--flight` grava um `.flight` por teste que falha (nunca muda o resultado, P1). **Cripto em repouso**
+(`_crypto.py`): `flight encrypt`/`decrypt` — envelope `FLGTENC1|salt|nonce|ct+tag`, KDF **scrypt** (stdlib),
+AEAD **AES-256-GCM** (`cryptography`, extra `[crypto]`; sem o pacote → `CryptoUnavailable` claro). **Viewer
+no browser** (`crates/flight-wasm` + `viewer-wasm/`): o `flight-reader` compilado p/ **WASM** — como o `zstd`
+é dep C, o decode passa a **`ruzstd`** (Rust puro) na feature `pure-zstd`, e um ABI C cru (`alloc`/`parse`/
+`dealloc`) dispensa wasm-bindgen; `scripts/build-wasm.sh` embute o `.wasm` em base64 num `index.html`
+**offline** (arrasta o `.flight` do `file://`). **Middleware** (`_web.py`): `FlightWSGI`/`FlightASGI` gravam
+um `.flight` por 500 com o trace da request, **agnóstico de framework**. **`flight ci`** (`_ci.py`) +
+**GitHub Action** (`.github/actions/flight`): comentário Markdown de causa-raiz p/ CI vermelho. **Recorders
+cross-language** (`recorders/go`, `recorders/node`): escrevem o **mesmo** `.flight` — msgpack à mão + frame
+zstd "stored" (blocos raw) → **zero deps**, lidos de volta pelo reader Rust/Python.
 
 ## Roadmap adiante — Fases 4–10
 
@@ -172,9 +174,9 @@ A bússola: **fidelidade → experiência → inteligência → alcance**. Toda 
 - **Fase 8 — Caixa-preta de produção (concluída).** Governador adaptativo de overhead (SLO), daemon
   always-on + flush no crash (sobrevive a SIGKILL/OOM), correlação distribuída (W3C `traceparent` /
   OpenTelemetry) com `flight trace`.
-- **Fase 9 — Laço viral e ecossistema (parcial).** ✅ plugin pytest (`pytest --flight`) + cripto em repouso
-  (`flight encrypt`, AES-256-GCM). 🔜 viewer no browser (reader Rust → WASM), GitHub Action, middleware
-  WSGI/ASGI, recorders cross-language.
+- **Fase 9 — Laço viral e ecossistema (concluída).** Viewer no browser (reader Rust → WASM, offline),
+  plugin `pytest --flight`, `flight ci` + GitHub Action, middleware WSGI/ASGI, recorders Go+Node no mesmo
+  formato, cripto em repouso (AES-256-GCM).
 - **Fase 10 — Moonshot: what-if debugging.** Editar um valor no passado e re-executar dali sobre a fita
   determinística — o resultado contrafactual.
 
@@ -207,8 +209,12 @@ python -m flight inspect crash.flight
 python -m flight run --slo 0.03 --daemon servico.py   # overhead como SLO + sobrevive a kill -9 / OOM
 python -m flight trace ./crashes                       # grafo de crash cross-service (por trace id)
 python -m flight encrypt crash.flight --passphrase "$KEY"   # cripto em repouso (extra [crypto])
+python -m flight ci .flight                            # comentário Markdown de causa-raiz p/ CI
 pytest --flight                                        # um .flight por teste que falha (plugin)
 ```
+
+Viewer no browser (offline, sem instalar nada): rode `scripts/build-wasm.sh` e abra `viewer-wasm/index.html`,
+arrastando um `.flight`. Recorders cross-language em `recorders/go` e `recorders/node` escrevem o mesmo formato.
 
 Em produção (Fase 8): `flight.install(overhead_slo=0.03, daemon=True)` liga o governador e o supervisor;
 `flight.correlate(service="checkout")` carimba o contexto de trace (ambiente / OTel / explícito) e

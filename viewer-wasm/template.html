@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Flight — black box viewer</title>
+<style>
+  :root { color-scheme: dark; --bg:#0e1116; --panel:#161b22; --line:#232a34;
+          --ink:#e6edf3; --dim:#8b949e; --accent:#58a6ff; --bad:#ff7b72; --ok:#3fb950; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+         background:var(--bg); color:var(--ink); }
+  header { padding:20px 24px; border-bottom:1px solid var(--line); }
+  h1 { margin:0; font-size:18px; font-weight:600; }
+  h1 .plane { color:var(--accent); }
+  .sub { color:var(--dim); margin-top:4px; }
+  main { max-width:1000px; margin:0 auto; padding:24px; }
+  #drop { border:2px dashed var(--line); border-radius:12px; padding:48px 24px;
+          text-align:center; color:var(--dim); cursor:pointer; transition:.15s; }
+  #drop.hot { border-color:var(--accent); color:var(--ink); background:#111722; }
+  #drop input { display:none; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+          padding:16px 18px; margin-top:16px; }
+  .card h2 { margin:0 0 10px; font-size:13px; letter-spacing:.04em; text-transform:uppercase;
+             color:var(--dim); font-weight:600; }
+  .exc { font-size:16px; }
+  .exc .type { color:var(--bad); font-weight:700; }
+  .chips span { display:inline-block; background:#0d1117; border:1px solid var(--line);
+                border-radius:6px; padding:2px 8px; margin:2px 4px 2px 0; color:var(--dim); }
+  table { width:100%; border-collapse:collapse; }
+  td,th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--dim); font-weight:600; }
+  .where { color:var(--dim); }
+  .k { color:var(--accent); }
+  .kv { color:var(--dim); } .kv b { color:var(--ink); font-weight:600; }
+  .muted { color:var(--dim); }
+  .err { color:var(--bad); }
+  ul.events { list-style:none; margin:0; padding:0; max-height:340px; overflow:auto; }
+  ul.events li { padding:3px 0; border-bottom:1px solid var(--line); }
+  ul.events .kind { display:inline-block; width:92px; color:var(--accent); }
+  footer { color:var(--dim); text-align:center; padding:24px; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="plane">✈</span> Flight — black box viewer</h1>
+  <div class="sub">Drop a <code>.flight</code> file. It's parsed <b>in your browser</b> by the
+    Rust reader compiled to WebAssembly — nothing is uploaded, nothing installed.</div>
+</header>
+<main>
+  <label id="drop">
+    <div id="dropmsg">Drop a <b>.flight</b> here, or click to choose one.</div>
+    <input type="file" id="file" accept=".flight" />
+  </label>
+  <div id="out"></div>
+</main>
+<footer>Runs entirely offline · powered by <code>flight-reader</code> (Rust → WASM) · pure-Rust zstd</footer>
+
+<script>
+const WASM_BASE64 = "__WASM_BASE64__";
+
+let exportsPromise = null;
+function loadWasm() {
+  if (!exportsPromise) {
+    const bin = Uint8Array.from(atob(WASM_BASE64), c => c.charCodeAt(0));
+    exportsPromise = WebAssembly.instantiate(bin, {}).then(r => r.instance.exports);
+  }
+  return exportsPromise;
+}
+
+async function parseFlight(bytes) {
+  const ex = await loadWasm();
+  const ptr = ex.alloc(bytes.length);
+  new Uint8Array(ex.memory.buffer).set(bytes, ptr);
+  const resPtr = ex.parse(ptr, bytes.length);
+  const dv = new DataView(ex.memory.buffer);
+  const len = dv.getUint32(resPtr, true);
+  const jsonBytes = new Uint8Array(ex.memory.buffer).slice(resPtr + 4, resPtr + 4 + len);
+  ex.free(resPtr, 4 + len);
+  ex.dealloc(ptr, bytes.length);
+  return JSON.parse(new TextDecoder().decode(jsonBytes));
+}
+
+const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const base = p => String(p).split('/').pop();
+
+function render(s, name) {
+  const out = document.getElementById('out');
+  if (s.error) { out.innerHTML = `<div class="card err">Could not parse: ${esc(s.error)}</div>`; return; }
+  let html = '';
+
+  html += `<div class="card"><h2>${esc(name)}</h2>
+    <div class="kv">format v<b>${s.format_version}</b> · written by flight <b>${esc(s.flight_version||'?')}</b>
+    · ${s.partial ? '<span class="err">PARTIAL</span>' : 'complete'} · ${s.used_index ? 'indexed' : 'linear-scan'}</div>
+    <div class="chips" style="margin-top:8px">${(s.blocks||[]).map(b=>`<span>${esc(b)}</span>`).join('')}</div></div>`;
+
+  if (s.exceptions && s.exceptions.length) {
+    html += `<div class="card"><h2>Exception</h2>`;
+    s.exceptions.forEach((e,i) => {
+      const rel = i===0 ? '' : ` <span class="muted">(${esc(e.relation)})</span>`;
+      html += `<div class="exc"><span class="type">${esc(e.type)}</span>: ${esc(e.message)}${rel}</div>`;
+    });
+    html += `</div>`;
+  }
+
+  if (s.frames && s.frames.length) {
+    html += `<div class="card"><h2>Frames (crash first)</h2><table>
+      <tr><th>#</th><th>function</th><th>where</th><th>locals</th></tr>`;
+    s.frames.forEach((f,i) => {
+      html += `<tr><td class="muted">${i}</td><td class="k">${esc(f.qualname)}</td>
+        <td class="where">${esc(base(f.file))}:${f.lineno}</td><td class="muted">${f.locals}</td></tr>`;
+    });
+    html += `</table></div>`;
+  }
+
+  if (s.meta) {
+    html += `<div class="card"><h2>Environment</h2>
+      <div class="kv">runtime <b>${esc(s.meta.python_version||'?')}</b> · platform <b>${esc(s.meta.platform||'?')}</b></div>
+      <div class="kv">cwd ${esc(s.meta.cwd||'?')}</div>
+      <div class="kv">argv ${esc((s.meta.argv||[]).join(' '))}</div></div>`;
+  }
+
+  html += `<div class="card"><h2>Events — ${s.event_count} across ${s.code_count} code objects${s.wrapped?' (ring wrapped)':''}</h2>`;
+  if (s.recent_events && s.recent_events.length) {
+    html += `<ul class="events">` + s.recent_events.map(e =>
+      `<li><span class="kind">${esc(e.kind)}</span> <span class="k">${esc(e.qualname||'?')}</span>
+       <span class="where">${esc(base(e.file)||'')}${e.line?(':'+e.line):''}</span></li>`).join('') + `</ul>`;
+  } else {
+    html += `<div class="muted">no ring events</div>`;
+  }
+  html += `</div>`;
+
+  out.innerHTML = html;
+}
+
+async function handleFile(file) {
+  document.getElementById('dropmsg').innerHTML = `Parsing <b>${esc(file.name)}</b>…`;
+  try {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    render(await parseFlight(buf), file.name);
+  } catch (e) {
+    document.getElementById('out').innerHTML = `<div class="card err">${esc(e)}</div>`;
+  }
+  document.getElementById('dropmsg').innerHTML = `Drop another <b>.flight</b>, or click to choose.`;
+}
+
+const drop = document.getElementById('drop');
+const input = document.getElementById('file');
+input.addEventListener('change', () => input.files[0] && handleFile(input.files[0]));
+['dragover','dragenter'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('hot'); }));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('hot'); }));
+drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) handleFile(f); });
+</script>
+</body>
+</html>

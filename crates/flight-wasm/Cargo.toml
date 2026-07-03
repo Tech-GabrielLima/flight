@@ -1,0 +1,25 @@
+[package]
+name = "flight-wasm"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+description = "The .flight reader compiled to WebAssembly: parse a black box in the browser, no install."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Decode-only reader (pure-Rust zstd) so it targets wasm32 with no C toolchain.
+flight-reader = { path = "../flight-reader", default-features = false, features = ["pure-zstd"] }
+flight-format = { path = "../flight-format", default-features = false, features = ["pure-zstd"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+
+# Standalone workspace so the wasm crate stays out of the native build/test and
+# maturin; it is built explicitly for wasm32 by scripts/build-wasm.sh.
+[workspace]

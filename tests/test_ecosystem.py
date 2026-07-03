@@ -203,3 +203,145 @@ def test_encrypt_a_real_flight_file_round_trips(tmp_path):
     assert Path(dec).read_bytes() == Path(src).read_bytes()
     f = flight.read(dec)
     assert f.exceptions[0][0] == "KeyError"
+
+
+# =========================================================================
+# web middleware (WSGI + ASGI) — framework-agnostic, stdlib-only tests
+# =========================================================================
+
+
+def test_wsgi_middleware_records_a_500_and_reraises(tmp_path):
+    from flight import FlightWSGI
+
+    def app(environ, start_response):
+        rows = [1, 2, 3]
+        return rows[99]  # IndexError
+
+    wrapped = FlightWSGI(app, output_dir=tmp_path / "w", service="checkout")
+    env = {
+        "REQUEST_METHOD": "GET",
+        "PATH_INFO": "/orders/42",
+        "HTTP_TRACEPARENT": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+    }
+    try:
+        with pytest.raises(IndexError):
+            wrapped(env, lambda s, h: None)
+    finally:
+        flight.uninstall()
+
+    files = list((tmp_path / "w").glob("*.flight"))
+    assert len(files) == 1
+    f = flight.read(files[0])
+    assert f.exceptions[0][0] == "IndexError"
+    # the request's trace context rode onto the black box (cross-service link)
+    assert f.trace_id == "4bf92f3577b34da6a3ce929d0e0e4736"
+
+
+def test_wsgi_middleware_passes_through_success(tmp_path):
+    from flight import FlightWSGI
+
+    def app(environ, start_response):
+        start_response("200 OK", [])
+        return [b"hello"]
+
+    wrapped = FlightWSGI(app, output_dir=tmp_path / "w", install=True)
+    try:
+        body = b"".join(wrapped({"REQUEST_METHOD": "GET", "PATH_INFO": "/"}, lambda s, h: None))
+    finally:
+        flight.uninstall()
+    assert body == b"hello"
+    assert not list((tmp_path / "w").glob("*.flight"))  # no crash → no black box
+
+
+def test_asgi_middleware_records_a_500_and_reraises(tmp_path):
+    import asyncio
+
+    from flight import FlightASGI
+
+    async def app(scope, receive, send):
+        d = {"k": 1}
+        return d["missing"]  # KeyError
+
+    wrapped = FlightASGI(app, output_dir=tmp_path / "a", service="api")
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/checkout",
+        "headers": [(b"traceparent", b"00-11111111111111111111111111111111-2222222222222222-01")],
+    }
+
+    async def receive():
+        return {}
+
+    async def send(_m):
+        return None
+
+    try:
+        with pytest.raises(KeyError):
+            asyncio.run(wrapped(scope, receive, send))
+    finally:
+        flight.uninstall()
+
+    files = list((tmp_path / "a").glob("*.flight"))
+    assert len(files) == 1
+    f = flight.read(files[0])
+    assert f.exceptions[0][0] == "KeyError"
+    assert f.trace_id == "1" * 32
+
+
+def test_asgi_middleware_ignores_non_http_scopes(tmp_path):
+    import asyncio
+
+    from flight import FlightASGI
+
+    seen = []
+
+    async def app(scope, receive, send):
+        seen.append(scope["type"])
+
+    wrapped = FlightASGI(app, output_dir=tmp_path / "a", install=True)
+    try:
+        asyncio.run(wrapped({"type": "lifespan"}, None, None))
+    finally:
+        flight.uninstall()
+    assert seen == ["lifespan"]
+
+
+# =========================================================================
+# `flight ci` — the CI root-cause comment renderer
+# =========================================================================
+
+
+def _zero_div_flight(path: Path) -> Path:
+    def average(nums):
+        return sum(nums) / len(nums)
+
+    flight.install(output_dir=path.parent)
+    try:
+        average([])
+    except ZeroDivisionError:
+        flight.capture(path=str(path))
+    flight.uninstall()
+    return path
+
+
+def test_ci_comment_renders_markdown(tmp_path):
+    from flight._ci import render_comment
+
+    src = _zero_div_flight(tmp_path / "c.flight")
+    md = render_comment(src)
+    assert "ZeroDivisionError" in md
+    assert "Fingerprint" in md
+    assert "<details><summary>Likely cause</summary>" in md
+    assert "average" in md  # the crash frame
+    assert md.startswith("### ")  # a heading, safe to drop into a comment
+
+
+def test_ci_comment_handles_ring_only_flight(tmp_path):
+    from flight._ci import render_comment
+
+    flight.install(output_dir=tmp_path)
+    src = flight.dump(tmp_path / "ring.flight")
+    flight.uninstall()
+    md = render_comment(src)
+    assert "no crash detail" in md
