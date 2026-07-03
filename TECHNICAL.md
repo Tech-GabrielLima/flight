@@ -272,14 +272,25 @@ Fase 8   ✅ produção. TUDO Python puro (correlação na fita NONDET; dump rin
             (superestima em N cores = seguro p/ SLO); checkpoint periódico (kill duro perde ≤1 intervalo);
             supervisor-sobre-checkpoint, não ring em shm lido ao vivo (futuro). Testes: test_production.py
             (28, incl. SIGKILL num filho real recuperando o black box).
+Fase 9   🚧 ecossistema (parcial, 2 de 6). Plugin pytest (_pytest.py, entry point pytest11): opt-in
+            --flight, hookwrapper em pytest_runtest_call grava cada teste sob o Flight, na falha
+            (outcome.excinfo) escreve .flight completo nomeado pelo node id (--flight-dir/--flight-lines/
+            --flight-all), path no relatório+summary; nunca muda o resultado (P1, gravação embrulhada).
+            Cripto em repouso (_crypto.py): envelope FLGTENC1|salt(16)|nonce(12)|ct+tag, KDF scrypt (stdlib
+            hashlib, maxmem explícito), AEAD AES-256-GCM (cryptography, extra [crypto]); header como AAD;
+            senha errada/trunc/tamper → DecryptError; sem cryptography → CryptoUnavailable claro (KDF+
+            enquadramento stdlib sempre testáveis). CLI encrypt/decrypt (--passphrase/$FLIGHT_PASSPHRASE/
+            prompt). PENDENTE: viewer WASM (precisa decode zstd Rust-puro; dep atual = zstd C, não compila
+            p/ wasm32), middleware WSGI/ASGI, GitHub Action, recorders cross-lang (Go/Node). Testes:
+            test_ecosystem.py (14; round-trip AEAD roda se cryptography presente, senão pula).
 Fase 5   🔜 depurador reverso: step-backward + breakpoint no passado sobre state_at(seq);
             bytecode nativo (§3.2) p/ sub-linha; exposição via DAP (VS Code/PyCharm).
 Fase 6   🔜 flight diff (primeira divergência) + delta debugging (ddmin sobre a fita).
 Fase 7   🔜 inteligência: flight explain (LLM), repro --pytest, query semântica, dedup frame+estado.
 Fase 8   ✅ produção (ver bloco acima): governador de overhead (SLO), supervisor + flush no crash
             (sobrevive SIGKILL/OOM), correlação distribuída (W3C traceparent / OpenTelemetry) + flight trace.
-Fase 9   🔜 ecossistema: viewer WASM no browser, plugin pytest, GitHub Action, middleware web,
-            recorders cross-language, cripto em repouso.
+Fase 9   🚧 ecossistema (ver bloco acima): ✅ plugin pytest + cripto em repouso; 🔜 viewer WASM, GitHub
+            Action, middleware web, recorders cross-language.
 Fase 10  🔜 moonshot: what-if debugging (editar valor no passado e re-executar dali sobre a fita).
 ```
 

@@ -29,6 +29,13 @@ from __future__ import annotations
 from ._adapters import Adapted, adapter
 from ._config import Config
 from ._correlation import Link, TraceContext, trace_graph
+from ._crypto import (
+    CryptoError,
+    CryptoUnavailable,
+    DecryptError,
+    decrypt_file,
+    encrypt_file,
+)
 from ._ddmin import MinimizeResult, minimize
 from ._diff import Divergence, diff_files as diff
 from ._explain import Explanation, explain
@@ -54,6 +61,9 @@ __all__ = [
     "Adapted",
     "Config",
     "Crash",
+    "CryptoError",
+    "CryptoUnavailable",
+    "DecryptError",
     "Divergence",
     "Explanation",
     "Flight",
@@ -71,9 +81,11 @@ __all__ = [
     "adapter",
     "capture",
     "correlate",
+    "decrypt_file",
     "deterministic",
     "diff",
     "dump",
+    "encrypt_file",
     "explain",
     "fingerprint",
     "install",

@@ -286,6 +286,46 @@ def _cmd_trace(args: argparse.Namespace) -> int:
     return 0
 
 
+def _passphrase(args) -> str:
+    """Resolve a passphrase from --passphrase, $FLIGHT_PASSPHRASE, or a prompt."""
+    import os
+
+    if getattr(args, "passphrase", None):
+        return args.passphrase
+    env = os.environ.get("FLIGHT_PASSPHRASE")
+    if env:
+        return env
+    import getpass
+
+    return getpass.getpass("passphrase: ")
+
+
+def _cmd_encrypt(args: argparse.Namespace) -> int:
+    """Encrypt a `.flight` at rest (AES-256-GCM; needs the [crypto] extra)."""
+    from ._crypto import CryptoError, encrypt_file
+
+    try:
+        out = encrypt_file(args.file, _passphrase(args), args.output)
+    except CryptoError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    print(f"encrypted → {out}")
+    return 0
+
+
+def _cmd_decrypt(args: argparse.Namespace) -> int:
+    """Decrypt a Flight envelope produced by `flight encrypt`."""
+    from ._crypto import CryptoError, decrypt_file
+
+    try:
+        out = decrypt_file(args.file, _passphrase(args), args.output)
+    except CryptoError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    print(f"decrypted → {out}")
+    return 0
+
+
 def _cmd_view(args: argparse.Namespace) -> int:
     """Open the TUI viewer on a `.flight` file."""
     try:
@@ -392,6 +432,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     tr.add_argument("paths", nargs="+", help="`.flight` files or directories to scan")
     tr.set_defaults(func=_cmd_trace)
+
+    enc = sub.add_parser("encrypt", help="encrypt a .flight at rest (AES-256-GCM; [crypto] extra)")
+    enc.add_argument("file", help="path to the .flight file")
+    enc.add_argument("-o", "--output", help="output path (default <file>.enc)")
+    enc.add_argument("--passphrase", help="passphrase (else $FLIGHT_PASSPHRASE, else prompt)")
+    enc.set_defaults(func=_cmd_encrypt)
+
+    dec = sub.add_parser("decrypt", help="decrypt a Flight envelope from `flight encrypt`")
+    dec.add_argument("file", help="path to the .enc file")
+    dec.add_argument("-o", "--output", help="output path (default: strip .enc)")
+    dec.add_argument("--passphrase", help="passphrase (else $FLIGHT_PASSPHRASE, else prompt)")
+    dec.set_defaults(func=_cmd_decrypt)
 
     return p
 

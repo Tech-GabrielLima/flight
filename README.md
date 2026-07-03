@@ -69,9 +69,14 @@ Three bets underpin the project (see [VISION.md](VISION.md)):
 **It is** a scoped, post-mortem recorder with a first-class viewer, evolving toward time-travel
 debugging. **It is not** an APM, a live debugger (that's `pdb`), or a profiler.
 
-## Status — Phase 8 (the production black box) ✅
+## Status — Phase 8 complete; Phase 9 in progress
 
-Every phase through 8 is complete, end to end and fully tested: 0 (foundation), 1 (the full black box),
+Phases 0 through 8 are complete, end to end and fully tested. Phase 9 (the ecosystem) is a basket of
+integrations being delivered piece by piece — **shipped so far: a pytest plugin and at-rest encryption**
+(see [the ecosystem](#the-ecosystem--phase-9) below); the browser WASM viewer, web middleware, a GitHub
+Action and cross-language recorders are still ahead.
+
+Every phase through 8: 0 (foundation), 1 (the full black box),
 1.5 (the TUI viewer), 2 (scoped time-travel), 3 (rungs 1–2 of re-execution), 4 (deterministic I/O +
 thread/asyncio scheduling — see [deterministic I/O](#deterministic-io--phase-4) below), 5 (the reverse
 debugger + DAP — see [reverse debugging](#reverse-debugging--phase-5) below), 6 (`flight diff` +
@@ -437,6 +442,44 @@ an SLO); the checkpoint is periodic, so a hard kill can lose up to one interval 
 and it is a supervisor-over-a-checkpoint, not yet a shared-memory ring the supervisor reads live — that is
 the noted future refinement.
 
+### The ecosystem — Phase 9
+
+Phase 9 is about removing the friction between a crash and a shared, understandable `.flight`. It is a
+basket of independent integrations; two are shipped.
+
+**A pytest plugin.** A failing test gives you a traceback; `pytest --flight` gives you its black box.
+The plugin records each test and, on failure, writes a full-detail `.flight` named after the test — then
+points at it in the failure report and the run summary. It is opt-in and never changes a test's outcome.
+
+```console
+$ pytest --flight
+...
+FAILED test_orders.py::test_refund - IndexError: list index out of range
+------------------------------- Flight recording -------------------------------
+black box: .flight/test_orders.py_test_refund.flight
+$ python -m flight inspect .flight/test_orders.py_test_refund.flight
+```
+
+`--flight-dir=DIR` chooses where they go; `--flight-lines` records per-line; `--flight-all` also keeps the
+passing tests. It registers as a `pytest11` entry point, so an installed Flight is discovered automatically.
+
+**Encryption at rest.** A `.flight` is made to be shared, but even after scrubbing it holds real values.
+`flight encrypt` seals one so you can hand the *bug* to a vendor without handing over the *data*: the key
+comes from a passphrase via scrypt, the payload is sealed with AES-256-GCM (authenticated — a wrong
+passphrase or any tampering is detected), in an envelope with its own magic so ciphertext is never mistaken
+for a `.flight`.
+
+```console
+$ python -m flight encrypt crash.flight --passphrase "$KEY"   # → crash.flight.enc
+$ python -m flight decrypt crash.flight.enc --passphrase "$KEY"
+```
+
+AES-GCM needs a real cipher, so this depends on the **`cryptography`** package
+(`pip install 'flight-recorder[crypto]'`); without it the commands fail with a clear message rather than
+obscurely (the scrypt KDF and the envelope framing are stdlib-only). Still ahead in Phase 9: the browser
+**WASM viewer** (needs a pure-Rust zstd decode path first — the reader's zstd is a C dependency that won't
+target `wasm32` cleanly), **WSGI/ASGI middleware**, a **GitHub Action**, and **cross-language recorders**.
+
 ## Roadmap ahead — Phases 4–10
 
 The compass: **fidelity → experience → intelligence → reach**. Every phase keeps the five inviolables
@@ -466,9 +509,11 @@ The compass: **fidelity → experience → intelligence → reach**. Every phase
   not a bet), an **always-on daemon** that flushes on `SIGKILL`/OOM via an external supervisor (a black box
   that survives the plane), and **distributed correlation** (W3C `traceparent` / OpenTelemetry) for
   cross-service crashes. See [the production black box](#the-production-black-box--phase-8) above.
-- **Phase 9 — The viral loop & ecosystem.** A **browser viewer** (the Rust reader compiled to **WASM**), a
-  **pytest plugin**, a **GitHub Action**, web-framework middleware, **cross-language recorders** writing the
-  same `.flight`, and optional **at-rest encryption**.
+- **Phase 9 — The viral loop & ecosystem. 🚧 In progress.** Shipped: a **pytest plugin** (`pytest --flight`
+  attaches a black box to each failing test) and optional **at-rest encryption** (`flight encrypt`,
+  AES-256-GCM). Ahead: a **browser viewer** (the Rust reader compiled to **WASM**), a **GitHub Action**,
+  WSGI/ASGI **middleware**, and **cross-language recorders** writing the same `.flight`. See
+  [the ecosystem](#the-ecosystem--phase-9) above.
 - **Phase 10 — Moonshot: what-if debugging.** Edit a value in the past and re-execute forward over the
   deterministic tape: "what if `numbers` weren't empty here?" — the counterfactual result. Event sourcing +
   tape make it feasible.
@@ -516,6 +561,8 @@ python -m flight repro crash.flight --pytest -o test_bug.py  # a committable reg
 python -m flight fingerprint crash.flight                    # dedup id (by frame + state)
 python -m flight run --slo 0.03 --daemon service.py          # overhead SLO + survive kill -9 / OOM
 python -m flight trace ./crashes                             # cross-service crash graph (by trace id)
+python -m flight encrypt crash.flight --passphrase "$KEY"    # seal at rest (needs the [crypto] extra)
+pytest --flight                                              # a .flight for every failing test (plugin)
 ```
 
 For production (Phase 8): keep overhead under a ceiling, survive an uncatchable death, and correlate crashes
@@ -633,6 +680,8 @@ python/flight/
   _governor.py     adaptive overhead governor: overhead as an SLO (Phase 8)
   _daemon.py       crash-surviving supervisor: flush a black box after SIGKILL/OOM (Phase 8)
   _correlation.py  W3C trace context + cross-service crash graph (Phase 8)
+  _pytest.py       pytest plugin: a .flight per failing test (Phase 9)
+  _crypto.py       at-rest encryption of a .flight (AES-256-GCM, optional) (Phase 9)
   _read.py, _cli.py, _config.py
 tests/             Python tests (serializer, capture, reader, CLI)
 scripts/bench.py   overhead baseline
