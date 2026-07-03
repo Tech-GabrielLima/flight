@@ -150,7 +150,9 @@ def _cmd_repro(args: argparse.Namespace) -> int:
     """Generate (and verify) a standalone reproduction script from a crash."""
     from ._repro import write_repro
 
-    result = write_repro(args.file, args.output, verify=not args.no_verify)
+    result = write_repro(
+        args.file, args.output, verify=not args.no_verify, pytest=args.pytest
+    )
     if not result.script:
         print(f"cannot build a repro: {result.reason}", file=sys.stderr)
         return 1
@@ -163,6 +165,31 @@ def _cmd_repro(args: argparse.Namespace) -> int:
         print("  ✓ verified: it reproduces the same exception")
     elif result.verified is False:
         print("  ✗ not verified: it did not reproduce (best-effort skeleton)")
+    return 0
+
+
+def _cmd_explain(args: argparse.Namespace) -> int:
+    """Root-cause a crash `.flight`: a heuristic summary (offline), or the
+    LLM-ready prompt (--prompt), or a model's explanation (--llm)."""
+    from ._explain import explain
+
+    result = explain(args.file, use_llm=args.llm)
+    if args.prompt:
+        print(result.prompt)
+    else:
+        print(result.render())
+    return 0
+
+
+def _cmd_fingerprint(args: argparse.Namespace) -> int:
+    """Print a crash's dedup fingerprint (Sentry-style, by frame + state)."""
+    from ._fingerprint import fingerprint
+
+    f = read(args.file)
+    if not f.has_crash:
+        print("no crash in this file")
+        return 1
+    print(fingerprint(args.file))
     return 0
 
 
@@ -268,7 +295,21 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("file", help="path to the crash .flight file")
     rp.add_argument("-o", "--output", help="output script path (default repro_bug.py)")
     rp.add_argument("--no-verify", action="store_true", help="don't run it to verify")
+    rp.add_argument(
+        "--pytest", action="store_true",
+        help="emit a committable pytest regression test (test_repro.py)",
+    )
     rp.set_defaults(func=_cmd_repro)
+
+    ex = sub.add_parser("explain", help="root-cause a crash .flight (heuristics; optional LLM)")
+    ex.add_argument("file", help="path to the crash .flight file")
+    ex.add_argument("--prompt", action="store_true", help="print the LLM-ready prompt only")
+    ex.add_argument("--llm", action="store_true", help="call a configured LLM provider")
+    ex.set_defaults(func=_cmd_explain)
+
+    fp = sub.add_parser("fingerprint", help="print a crash's dedup fingerprint (frame + state)")
+    fp.add_argument("file", help="path to the crash .flight file")
+    fp.set_defaults(func=_cmd_fingerprint)
 
     df = sub.add_parser(
         "diff", help="compare two .flight files and report the first divergence"

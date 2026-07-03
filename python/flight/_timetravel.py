@@ -116,6 +116,28 @@ def _same_file(a: str, b: str) -> bool:
     return bool(a) and bool(b) and os.path.basename(a) == os.path.basename(b)
 
 
+def parse_len(expr: str) -> Optional[tuple[str, Callable[[int, int], bool], int]]:
+    """Parse a container-size condition ``len(name) <op> N`` — the semantic
+    timeline query "when did `cache` pass 100 entries?". Returns
+    ``(name, op_fn, N)`` or None if `expr` isn't a size query."""
+    e = expr.strip()
+    if not (e.startswith("len(") or e.startswith("size(")):
+        return None
+    open_paren = e.index("(")
+    close = e.find(")", open_paren)
+    if close == -1:
+        return None
+    name = e[open_paren + 1 : close].strip()
+    rest = e[close + 1 :].strip()
+    for op in (">=", "<=", "==", "!=", ">", "<"):
+        if rest.startswith(op):
+            try:
+                return name, _OPS[op], int(rest[len(op) :].strip())
+            except ValueError:
+                return None
+    return None
+
+
 def parse_condition(expr: str) -> tuple[str, Callable[[object], bool]]:
     """Parse a watch condition into ``(name, predicate)``.
 
@@ -316,7 +338,22 @@ class TimeTravel:
     # -- breakpoint in the past --------------------------------------------
 
     def find_all(self, expr: str) -> list[Step]:
-        """Every write where the condition holds — the timeline of a value."""
+        """Every write where the condition holds — the timeline of a value.
+
+        Value conditions (``running > 100``) test each write's new value; the
+        semantic size query ``len(cache) > 100`` tests the container's growing
+        entry count as item/attr writes accumulate."""
+        size_q = parse_len(expr)
+        if size_q is not None:
+            name, op, n = size_q
+            keys: set = set()
+            out = []
+            for s in self._steps:
+                if s.kind in ("item", "attr") and s.name == name:
+                    keys.add(s.key)
+                    if op(len(keys), n):
+                        out.append(s)
+            return out
         name, pred = parse_condition(expr)
         out = []
         for s in self._steps:

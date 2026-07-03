@@ -112,6 +112,16 @@ de Zeller ligado ao replay — `flight.minimize(path, fn)` substitui valores gra
 mantém só as reduções que ainda falham, até sobrar o conjunto mínimo *load-bearing*: "seu bug precisa só
 destes N valores". `ddmin` genérico é função pura testada à parte.
 
+**Fase 7 — camada de inteligência (concluída).** `flight explain` (`_explain.py`): um **resumo heurístico
+de causa-raiz offline** (exceção + frame do crash + locais suspeitos — vazio/None/zero — com palpite
+dirigido: ZeroDivisionError→divisor zero, etc.) **e** um **prompt pronto para LLM** empacotando a cadeia de
+exceção + stack + código + locais; o provider de modelo é injetável (`provider(prompt)→texto`), opt-in via
+`--llm` (Anthropic), e falha de modelo nunca quebra o explain (P1). `flight repro --pytest`: emite um
+**teste de regressão commitável** (`pytest.raises`) que também se auto-verifica como script. **Query
+semântica** de tamanho — `len(cache) > 100` — no motor de time-travel ("quando `cache` passou de 100?").
+`flight fingerprint` (`_fingerprint.py`): hash estável por cadeia de exceções + `(qualname, arquivo,
+offset)` de cada frame + *kinds* dos locais — dedup estilo Sentry, mas por **frame + estado**.
+
 ## Roadmap adiante — Fases 4–10
 
 A bússola: **fidelidade → experiência → inteligência → alcance**. Toda fase mantém os cinco invioláveis

@@ -30,6 +30,8 @@ from ._adapters import Adapted, adapter
 from ._config import Config
 from ._ddmin import MinimizeResult, minimize
 from ._diff import Divergence, diff_files as diff
+from ._explain import Explanation, explain
+from ._fingerprint import fingerprint
 from ._install import dump, install, is_installed, uninstall
 from ._nondet import ReplayDivergence, Tape, deterministic, replay, replay_tape
 from ._read import Crash, Flight, Frame, Mutation, Recording, read
@@ -43,6 +45,7 @@ __all__ = [
     "Config",
     "Crash",
     "Divergence",
+    "Explanation",
     "Flight",
     "Frame",
     "MinimizeResult",
@@ -58,6 +61,8 @@ __all__ = [
     "deterministic",
     "diff",
     "dump",
+    "explain",
+    "fingerprint",
     "install",
     "is_installed",
     "minimize",

@@ -251,6 +251,12 @@ Fase 6   ✅ debugging por comparação. flight diff (_diff.py): alinha 2 grava�
             = fluxo ramificou; CLI sai 1 se divergem. Delta-debug (_ddmin.py): ddmin de Zeller (puro) +
             minimize_tape/flight.minimize — replaya neutralizando valores até o conjunto mínimo que ainda
             falha; neutralização que ramifica → ReplayDivergence → "não reproduz" → valor mantido.
+Fase 7   ✅ inteligência. flight explain (_explain.py): resumo heurístico offline (exceção+frame+locais
+            suspeitos, palpite p/ ZeroDiv/Index/Key/None+attr) + prompt LLM; provider injetável, --llm
+            opt-in (Anthropic), falha nunca quebra (P1). repro --pytest (_repro.py): teste de regressão
+            commitável (pytest.raises) + auto-verifica via __main__. Query semântica len(x) op N no
+            _timetravel (nº de chaves distintas ao longo da timeline). fingerprint (_fingerprint.py): hash
+            estável de exceções + (qualname,basename,offset) por frame + kinds dos locais = dedup Sentry.
 Fase 5   🔜 depurador reverso: step-backward + breakpoint no passado sobre state_at(seq);
             bytecode nativo (§3.2) p/ sub-linha; exposição via DAP (VS Code/PyCharm).
 Fase 6   🔜 flight diff (primeira divergência) + delta debugging (ddmin sobre a fita).

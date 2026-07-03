@@ -69,13 +69,14 @@ Three bets underpin the project (see [VISION.md](VISION.md)):
 **It is** a scoped, post-mortem recorder with a first-class viewer, evolving toward time-travel
 debugging. **It is not** an APM, a live debugger (that's `pdb`), or a profiler.
 
-## Status — Phase 6 (debugging by comparison) ✅
+## Status — Phase 7 (the intelligence layer) ✅
 
-Every phase through 6 is complete, end to end and fully tested: 0 (foundation), 1 (the full black box),
+Every phase through 7 is complete, end to end and fully tested: 0 (foundation), 1 (the full black box),
 1.5 (the TUI viewer), 2 (scoped time-travel), 3 (rungs 1–2 of re-execution), 4 (deterministic I/O +
 thread/asyncio scheduling — see [deterministic I/O](#deterministic-io--phase-4) below), 5 (the reverse
-debugger + DAP — see [reverse debugging](#reverse-debugging--phase-5) below) and 6 (`flight diff` +
-delta debugging — see [debugging by comparison](#debugging-by-comparison--phase-6) below).
+debugger + DAP — see [reverse debugging](#reverse-debugging--phase-5) below), 6 (`flight diff` +
+delta debugging — see [debugging by comparison](#debugging-by-comparison--phase-6) below) and 7 (`explain`
+/ `repro --pytest` / semantic queries / dedup — see [the intelligence layer](#the-intelligence-layer--phase-7)).
 
 **The engine (Rust):**
 - **`flight-format`** — the versioned, append-only, truncation-tolerant `.flight` format: header,
@@ -343,6 +344,50 @@ print(res.render())
 Neutralizing a value that changes control flow makes the replay diverge — read as "didn't reproduce" — so
 that value is correctly kept. The generic `ddmin` is a pure function, unit-tested on its own.
 
+### The intelligence layer — Phase 7
+
+A `.flight` is the perfect structured context for a model. `flight explain` has two halves: a
+**deterministic, offline root-cause summary** (no model, no network), and an **LLM-ready prompt** that a
+provider can turn into prose + a patch.
+
+```console
+$ python -m flight explain crash.flight
+ZeroDivisionError: division by zero
+  crashed in compute_average (crash.py:5)
+  likely cause — suspicious state at the crash:
+    • numbers (list[0]) is empty
+    • total (0) is zero
+  → a divisor is zero.
+```
+
+The model call is an injectable layer (`explain(path, provider=fn)`), so this is fully useful and tested
+with no API key, and *becomes* an LLM explainer when you configure one (`--llm`, Anthropic via
+`ANTHROPIC_API_KEY`); a model/network failure never breaks it (P1). `flight explain --prompt` prints just
+the bundle to paste into any model.
+
+**A bug report that becomes a permanent test.** `flight repro --pytest` reuses the verified reconstruction
+(Phase 3) to emit a committable regression test — with the crash's inputs frozen — that also self-verifies:
+
+```console
+$ python -m flight repro crash.flight --pytest -o test_bug.py
+wrote test_bug.py
+  ✓ verified: it reproduces the same exception
+$ pytest test_bug.py          # def test_regression(): with pytest.raises(...): ...
+```
+
+**Semantic timeline queries.** Ask a question of the recorded history — "when did `cache` pass 100
+entries?" — with a size condition over the mutation timeline:
+
+```console
+$ python -m flight debug cache.flight --find "len(cache) > 100"
+first match: #205 svc.py:6 item cache[100] = 10000
+```
+
+**Dedup by frame + state.** `flight fingerprint` is a stable short hash of the exception chain, each
+frame's `(qualname, file, offset-in-function)` and the *kinds* of the crash-frame's locals — so the same
+bug groups to one id (even when line numbers shift), and different bugs stay apart. Better than grouping by
+stack alone.
+
 ## Roadmap ahead — Phases 4–10
 
 The compass: **fidelity → experience → intelligence → reach**. Every phase keeps the five inviolables
@@ -364,9 +409,10 @@ The compass: **fidelity → experience → intelligence → reach**. Every phase
   **first diverging mutation / boundary call / event**; plus **delta debugging** (`flight.minimize`, ddmin
   over the tape) shrinking a crash to its minimal reproducer: "your bug needs only these 3 of the 500
   recorded values." See [debugging by comparison](#debugging-by-comparison--phase-6) above.
-- **Phase 7 — The intelligence layer.** A `.flight` is the perfect structured context for an LLM.
-  `flight explain` (root cause + suggested patch), `flight repro --pytest` (a committable regression test),
-  semantic queries over the timeline, and Sentry-style dedup by **common frame + state**.
+- **Phase 7 — The intelligence layer. ✅ Done.** `flight explain` (offline heuristic root cause + an
+  LLM-ready prompt / optional model call), `flight repro --pytest` (a committable, self-verifying
+  regression test), semantic timeline queries (`len(cache) > 100`), and `flight fingerprint` dedup by
+  **frame + state**. See [the intelligence layer](#the-intelligence-layer--phase-7) above.
 - **Phase 8 — The production black box.** An **adaptive overhead governor** (overhead as an SLO, not a bet),
   an **always-on daemon** that flushes on `SIGKILL`/OOM via an external supervisor (a black box that
   survives the plane), and **distributed correlation** (OpenTelemetry `traceparent`) for cross-service crashes.
@@ -415,6 +461,9 @@ python -m flight repro crash.flight       # generate + verify a reproduction scr
 python -m flight debug scope.flight       # reverse debugger: DAP server (VS Code / PyCharm)
 python -m flight debug scope.flight --find "running > 100"   # a breakpoint in the past, on the CLI
 python -m flight diff run_ok.flight run_fail.flight          # first point two runs diverged
+python -m flight explain crash.flight                        # heuristic root cause (+ --llm / --prompt)
+python -m flight repro crash.flight --pytest -o test_bug.py  # a committable regression test
+python -m flight fingerprint crash.flight                    # dedup id (by frame + state)
 ```
 
 Configuration (`flight.Config`): `ring_capacity`, `output_dir`, `dump_on_crash`, `record_lines`,
@@ -516,6 +565,8 @@ python/flight/
   _dap.py          Debug Adapter Protocol server over the engine (Phase 5)
   _diff.py         flight diff: first divergence of two recordings (Phase 6)
   _ddmin.py        delta debugging (ddmin) → minimal reproducer (Phase 6)
+  _explain.py      flight explain: heuristic root cause + LLM-ready prompt (Phase 7)
+  _fingerprint.py  crash dedup fingerprint by frame + state (Phase 7)
   _read.py, _cli.py, _config.py
 tests/             Python tests (serializer, capture, reader, CLI)
 scripts/bench.py   overhead baseline

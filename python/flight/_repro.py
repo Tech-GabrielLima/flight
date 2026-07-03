@@ -167,10 +167,13 @@ class _Stub:
 '''
 
 
-def _render_script(
+def _setup_lines(
     *, source: str, file: str, qualname: str, exc_type: str, build_lines: list[str],
     local_names: list[str], tape_json: Optional[str],
-) -> str:
+) -> list[str]:
+    """The shared body of a repro: embed the source, rebuild the crash-frame
+    state, resolve the function and its args, and define `_invoke`/`_attempt`.
+    Both the standalone script and the pytest test are this plus a tail."""
     parts = [_PREAMBLE, ""]
 
     # The crash function's source, embedded and exec'd into a private module.
@@ -241,6 +244,11 @@ def _render_script(
     else:
         parts.append("    _invoke()")
     parts.append("")
+    return parts
+
+
+def _render_script(**kw) -> str:
+    parts = _setup_lines(**kw)
     parts.append("try:")
     parts.append("    _attempt()")
     parts.append("except BaseException as _e:")
@@ -252,8 +260,34 @@ def _render_script(
     return "\n".join(parts) + "\n"
 
 
-def build_repro(flight_path, *, include_tape: bool = True) -> ReproResult:
-    """Generate (but do not write) a repro script for a crash `.flight`."""
+def _render_pytest(**kw) -> str:
+    """A committable regression test: the same reconstruction, asserted with
+    `pytest.raises`. Also runnable as a script (its `__main__` self-verifies),
+    so the same file works under pytest and under the subprocess verifier."""
+    exc_short = kw["exc_type"].split(".")[-1]
+    parts = _setup_lines(**kw)
+    parts.append("def test_regression():")
+    parts.append(f"    \"\"\"Regression test rebuilt by flight from a recorded {exc_short}.\"\"\"")
+    parts.append("    import pytest")
+    parts.append("    with pytest.raises(BaseException) as _ei:")
+    parts.append("        _attempt()")
+    parts.append("    assert type(_ei.value).__name__ == _expected")
+    parts.append("")
+    parts.append("")
+    parts.append("if __name__ == '__main__':")
+    parts.append("    try:")
+    parts.append("        _attempt()")
+    parts.append("    except BaseException as _e:")
+    parts.append("        if type(_e).__name__ == _expected:")
+    parts.append("            print('FLIGHT_REPRO_OK', _expected); _sys.exit(0)")
+    parts.append("        raise")
+    parts.append("    print('FLIGHT_REPRO_NOEXC'); _sys.exit(1)")
+    return "\n".join(parts) + "\n"
+
+
+def build_repro(flight_path, *, include_tape: bool = True, pytest: bool = False) -> ReproResult:
+    """Generate (but do not write) a repro for a crash `.flight`. With
+    `pytest=True`, emit a committable regression test (`pytest.raises`)."""
     fl = read(flight_path)
     if not fl.has_crash:
         return ReproResult(script="", verified=False, reason="no crash frames in this file")
@@ -284,7 +318,8 @@ def build_repro(flight_path, *, include_tape: bool = True) -> ReproResult:
     if include_tape and fl.has_nondet:
         tape_json = fl.tape_json()
 
-    script = _render_script(
+    render = _render_pytest if pytest else _render_script
+    script = render(
         source=source,
         file=frame.file,
         qualname=frame.qualname,
@@ -301,13 +336,17 @@ def build_repro(flight_path, *, include_tape: bool = True) -> ReproResult:
     )
 
 
-def write_repro(flight_path, out_path=None, *, verify: bool = True) -> ReproResult:
-    """Generate a repro script, write it, and (optionally) verify it runs and
-    reproduces the exception in a subprocess."""
-    result = build_repro(flight_path)
+def write_repro(
+    flight_path, out_path=None, *, verify: bool = True, pytest: bool = False
+) -> ReproResult:
+    """Generate a repro, write it, and (optionally) verify it reproduces the
+    exception in a subprocess. With `pytest=True`, write a regression test
+    (default name `test_repro.py`); it self-verifies via its `__main__` block."""
+    result = build_repro(flight_path, pytest=pytest)
     if not result.script:
         return result
-    out = Path(out_path) if out_path else Path("repro_bug.py")
+    default = "test_repro.py" if pytest else "repro_bug.py"
+    out = Path(out_path) if out_path else Path(default)
     out.write_text(result.script)
     result.path = out
     if verify:

@@ -92,7 +92,7 @@ vêm redigidos por default.
 | 4 | Fidelidade total de replay | Fechar o degrau 3: interpor arquivos/sockets/subprocess + **ordem** de locks/tasks (threads e asyncio) → replay multi-thread bit a bit | ✅ **concluída** (4a arquivos/pipes/subprocess + asyncio; 4b sockets + ordem de locks entre threads) |
 | 5 | Depurador reverso de verdade | *Step-backward* + "breakpoint no passado" sobre `state_at(seq)`; exposição via **DAP** (VS Code / PyCharm); granularidade sub-linha via bytecode nativo | ✅ **concluída** (engine + DAP com `supportsStepBack`; sub-linha via bytecode = futuro) |
 | 6 | Debugging por comparação | `flight diff a.flight b.flight` (primeira divergência) + **delta debugging** (ddmin sobre a fita → repro mínimo) | ✅ **concluída** (`flight diff` + `flight.minimize` via ddmin) |
-| 7 | Camada de inteligência | `flight explain` (causa-raiz + patch por LLM), `flight repro --pytest`, query semântica na timeline, dedup por frame+estado | 🔜 planejada |
+| 7 | Camada de inteligência | `flight explain` (causa-raiz + patch por LLM), `flight repro --pytest`, query semântica na timeline, dedup por frame+estado | ✅ **concluída** (explain heurístico+prompt LLM, repro --pytest, `len(x)>N`, fingerprint) |
 | 8 | Caixa-preta de produção | Governador adaptativo de overhead (SLO), daemon always-on + flush no crash (sobrevive a SIGKILL/OOM), correlação distribuída (OpenTelemetry) | 🔜 planejada |
 | 9 | Laço viral e ecossistema | Viewer no browser (reader Rust → WASM), plugin pytest, GitHub Action, middleware Django/FastAPI/Flask, recorders cross-language, cripto em repouso | 🔜 planejada |
 | 10 | Moonshots | *What-if debugging*: editar um valor no passado e re-executar dali sobre a fita determinística — resultado contrafactual | 🔜 planejada |
@@ -280,6 +280,25 @@ perfeito** para um LLM — infinitamente melhor que um traceback solto. Sobre is
   com as entradas do crash congeladas. O bug report vira proteção permanente.
 - **Query semântica** sobre a timeline: "quando `cache` passou de 100 entradas?" rodando sobre as mutações.
 - **Deduplicação** estilo Sentry, mas por **frame comum + estado**, não só por stack.
+
+> **Entregue.** `flight explain crash.flight` (`_explain.py`) tem duas metades: (1) um **resumo heurístico
+> de causa-raiz** determinístico e **offline** — identifica a exceção, o frame do crash, e os locais
+> suspeitos (contêiner vazio, `None`, zero) com um palpite dirigido para os casos clássicos
+> (ZeroDivisionError → divisor zero; IndexError/KeyError → contêiner vazio indexado; aliasing marcado) — e
+> (2) um **prompt pronto para LLM** que empacota cadeia de exceção + stack + janela de código + locais. O
+> provider de modelo é uma camada fina e **injetável** (`provider(prompt)→texto`), então o `explain` é útil
+> e 100% testado sem chave de API, e *vira* um explicador LLM quando você configura um (Anthropic via
+> `anthropic` + `ANTHROPIC_API_KEY`, opt-in com `--llm`); falha de modelo/rede nunca quebra o `explain`
+> (P1). `flight repro --pytest` (`_repro.py`) reusa a reconstrução da Fase 3 e emite um **teste de regressão
+> commitável** (`def test_regression(): with pytest.raises(...)`) que **também roda como script** (auto-
+> verifica pelo `__main__`), então o mesmo arquivo passa no pytest e no verificador por subprocesso.
+> **Query semântica** de tamanho de contêiner — `len(cache) > 100` — está no motor de time-travel
+> (`find_first`/`find_all`, reconstruindo o nº de chaves distintas ao longo da timeline): "quando `cache`
+> passou de 100 entradas?". **Dedup** (`_fingerprint.py`): `flight fingerprint` é um hash curto estável da
+> cadeia de exceções + `(qualname, basename, offset-na-função)` de cada frame + os *kinds* dos locais do
+> crash — mesmo bug ⇒ mesmo fingerprint (mesmo com linhas deslocadas), bugs diferentes ⇒ fingerprints
+> diferentes. **Escopo honesto:** a chamada real ao LLM é opt-in e não testada em CI; as heurísticas,
+> prompt, repro --pytest, query e fingerprint são determinísticos e testados.
 
 **Fase 8 — A caixa-preta de produção (deixar ligado de verdade).** Hoje o overhead é honesto porém fixo.
 Falta:
