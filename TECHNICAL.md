@@ -241,6 +241,11 @@ Fase 4   ✅ 4a: arquivos (read/readline/readinto/iter) + pipes (os.read) + subp
             4b: sockets (recv/recv_into); ORDEM de aquisição de locks entre threads gravada+IMPOSTA no
             replay (threads numeradas por início, cursores por-thread na fita, filtro p/ locks internos
             do runtime, timeout→ReplayDivergence). Fora: corridas sem lock, multiprocessing, per-await.
+Fase 5   ✅ depurador reverso: engine time-travel (_timetravel.py) sobre a Recording (cursor step
+            fwd/back, state() reconstrói locais+contêineres, breakpoint-no-passado find_first("x>100"),
+            parser de condição seguro, line-bp/watchpoint continue_forward/back); DAP (_dap.py) com
+            supportsStepBack (stepBack/reverseContinue → VS Code/PyCharm); CLI `flight debug [--find|--list]`.
+            Por-linha; sub-linha = bytecode nativo (§3.2), futuro.
 Fase 5   🔜 depurador reverso: step-backward + breakpoint no passado sobre state_at(seq);
             bytecode nativo (§3.2) p/ sub-linha; exposição via DAP (VS Code/PyCharm).
 Fase 6   🔜 flight diff (primeira divergência) + delta debugging (ddmin sobre a fita).

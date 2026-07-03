@@ -95,6 +95,14 @@ ordem de início, cada uma com sua trilha da fita) — reproduz o bug flaky de "
 Honestidade: só locks do usuário criados no escopo; aquisições não-bloqueantes/com timeout não são
 ordenadas; corridas sobre estado não-travado e multiprocessing ficam fora.
 
+**Fase 5 — depurador reverso (concluída).** Sobre a timeline de MUTATION da Fase 2, um motor de time-travel
+(`_timetravel.py`) dá um cursor que anda **para trás** e para frente; `state()` reconstrói locais e o
+conteúdo de contêineres no cursor; e o **"breakpoint no passado"** — `find_first("running > 100")` — pula
+para a escrita que primeiro satisfez a condição (parser seguro, sem `eval`). Exposto via **DAP**
+(`_dap.py`) anunciando `supportsStepBack` ⇒ **VS Code/PyCharm mostram Step Back/Reverse de graça**. CLI:
+`flight debug arquivo.flight` (servidor DAP) ou `--find "running > 100"` / `--list`. Granularidade por-linha
+(sub-linha depende do bytecode nativo, fase futura).
+
 ## Roadmap adiante — Fases 4–10
 
 A bússola: **fidelidade → experiência → inteligência → alcance**. Toda fase mantém os cinco invioláveis

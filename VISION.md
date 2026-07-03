@@ -90,7 +90,7 @@ vêm redigidos por default.
 | 2 | Time-travel de escopo | `with flight.record():` grava escritas de estado; histórico por variável; "quem mutou" | ✅ **concluída** |
 | 3 | Re-execução | Repro automático verificado; replay determinístico (time/random/uuid/…) | ✅ **degraus 1–2** (degrau 3, threads: pesquisa) |
 | 4 | Fidelidade total de replay | Fechar o degrau 3: interpor arquivos/sockets/subprocess + **ordem** de locks/tasks (threads e asyncio) → replay multi-thread bit a bit | ✅ **concluída** (4a arquivos/pipes/subprocess + asyncio; 4b sockets + ordem de locks entre threads) |
-| 5 | Depurador reverso de verdade | *Step-backward* + "breakpoint no passado" sobre `state_at(seq)`; exposição via **DAP** (VS Code / PyCharm); granularidade sub-linha via bytecode nativo | 🔜 planejada |
+| 5 | Depurador reverso de verdade | *Step-backward* + "breakpoint no passado" sobre `state_at(seq)`; exposição via **DAP** (VS Code / PyCharm); granularidade sub-linha via bytecode nativo | ✅ **concluída** (engine + DAP com `supportsStepBack`; sub-linha via bytecode = futuro) |
 | 6 | Debugging por comparação | `flight diff a.flight b.flight` (primeira divergência) + **delta debugging** (ddmin sobre a fita → repro mínimo) | 🔜 planejada |
 | 7 | Camada de inteligência | `flight explain` (causa-raiz + patch por LLM), `flight repro --pytest`, query semântica na timeline, dedup por frame+estado | 🔜 planejada |
 | 8 | Caixa-preta de produção | Governador adaptativo de overhead (SLO), daemon always-on + flush no crash (sobrevive a SIGKILL/OOM), correlação distribuída (OpenTelemetry) | 🔜 planejada |
@@ -235,6 +235,20 @@ passado" ("pare quando `running` passou de 100") e a UI reconstrói os locais na
 com a **instrumentação de bytecode nativa** que o TECHNICAL §3.2 já documenta como futuro, isso dá
 granularidade **sub-linha** e faz do flight um concorrente direto do `rr`/Pernosco — mas para Python e com
 o grafo de objetos junto. Exposição via **DAP (Debug Adapter Protocol)** ⇒ VS Code e PyCharm de graça.
+
+> **Entregue.** O motor de time-travel (`_timetravel.py`) é lógica pura sobre uma `Recording`: um cursor que
+> anda **para trás** e para frente pelas escritas de estado, `state()` reconstrói locais **e** o conteúdo de
+> contêineres no ponto do cursor (event sourcing), e o **"breakpoint no passado"** é uma busca na timeline —
+> `find_first("running > 100")` pula para a escrita que primeiro satisfez a condição (parser de condição
+> seguro, sem `eval`; comparações inválidas nunca quebram a sessão, P1). Breakpoints de linha e watchpoints
+> com `continue_forward`/`continue_back`. A sessão começa no **fim** (postura post-mortem) e anda para trás.
+> A exposição via **DAP** (`_dap.py`) anuncia `supportsStepBack` — então **VS Code e PyCharm mostram os
+> botões "Step Back"/"Reverse" e mandam `stepBack`/`reverseContinue`** de graça; o adaptador é read-only
+> sobre o `.flight` (as variáveis vêm da reconstrução no cursor, `evaluate` é um REPL com `find running >
+> 100`). `DebugAdapter.handle` é puro (dict→dicts), testado sem editor; `serve()` adiciona o enquadramento
+> Content-Length sobre stdio. CLI: `flight debug arquivo.flight` (servidor DAP) ou `--find "running > 100"` /
+> `--list` para responder na linha de comando. **Escopo honesto:** opera sobre gravações de escopo (Fase 2,
+> com a timeline de MUTATION); granularidade por-linha (a sub-linha depende do bytecode nativo, fase futura).
 
 **Fase 6 — Debugging por comparação: `flight diff` + minimização.** Duas capacidades que multiplicam o que
 já existe:

@@ -32,6 +32,7 @@ from ._install import dump, install, is_installed, uninstall
 from ._nondet import ReplayDivergence, Tape, deterministic, replay, replay_tape
 from ._read import Crash, Flight, Frame, Mutation, Recording, read
 from ._record import record, watch
+from ._timetravel import Step, TimeTravel
 
 __version__ = "0.0.1"
 
@@ -44,7 +45,9 @@ __all__ = [
     "Mutation",
     "Recording",
     "ReplayDivergence",
+    "Step",
     "Tape",
+    "TimeTravel",
     "__version__",
     "adapter",
     "capture",
@@ -58,9 +61,19 @@ __all__ = [
     "replay_tape",
     "repro",
     "stats",
+    "time_travel",
     "uninstall",
     "watch",
 ]
+
+
+def time_travel(flight_path):
+    """Open a scope `.flight` as a reverse debugger (:class:`TimeTravel`).
+
+    Step backward and forward through the recorded state writes, and set a
+    "breakpoint in the past" (``tt.find_first("running > 100")``). For an
+    editor, `flight debug file.flight` exposes the same engine over DAP."""
+    return TimeTravel(read(flight_path).recording())
 
 
 def repro(flight_path, out_path=None, *, verify=True):

@@ -166,6 +166,43 @@ def _cmd_repro(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_debug(args: argparse.Namespace) -> int:
+    """Reverse-debug a scope `.flight`. With `--find`, answer a "breakpoint in
+    the past" query on the command line; otherwise start a DAP server on stdio
+    for VS Code / PyCharm (which get Step-Back / Reverse buttons for free)."""
+    f = read(args.file)
+    if not f.has_mutations:
+        print("no scope recording in this file (was it written by `with flight.record()`?)")
+        return 1
+
+    if args.find or args.list:
+        from ._timetravel import TimeTravel
+
+        tt = TimeTravel(f.recording())
+        if args.list:
+            for s in tt.steps[: args.limit]:
+                print(f"  {s.describe()}")
+            if len(tt) > args.limit:
+                print(f"  … {len(tt) - args.limit} more (use --limit)")
+            return 0
+        step = tt.find_first(args.find)
+        if step is None:
+            print(f"no write ever matched: {args.find}")
+            return 1
+        print(f"first match: {step.describe()}")
+        locs = tt.state()["locals"]
+        shown = {k: v for k, v in locs.items() if not v.startswith("<module ")}
+        print("  state there: " + (", ".join(f"{k}={v}" for k, v in sorted(shown.items()))))
+        return 0
+
+    # DAP server over stdio for an editor.
+    from ._dap import DebugAdapter, serve
+
+    adapter = DebugAdapter(path=args.file)
+    serve(sys.stdin.buffer, sys.stdout.buffer, adapter)
+    return 0
+
+
 def _cmd_view(args: argparse.Namespace) -> int:
     """Open the TUI viewer on a `.flight` file."""
     try:
@@ -221,6 +258,17 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("-o", "--output", help="output script path (default repro_bug.py)")
     rp.add_argument("--no-verify", action="store_true", help="don't run it to verify")
     rp.set_defaults(func=_cmd_repro)
+
+    dbg = sub.add_parser(
+        "debug", help="reverse-debug a scope .flight (DAP server, or --find a past breakpoint)"
+    )
+    dbg.add_argument("file", help="path to the scope .flight file")
+    dbg.add_argument(
+        "--find", help='breakpoint in the past: jump to the first write matching, e.g. "running > 100"'
+    )
+    dbg.add_argument("--list", action="store_true", help="list the timeline steps and exit")
+    dbg.add_argument("--limit", type=int, default=50, help="max steps to list (default 50)")
+    dbg.set_defaults(func=_cmd_debug)
 
     return p
 

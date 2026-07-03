@@ -69,11 +69,12 @@ Three bets underpin the project (see [VISION.md](VISION.md)):
 **It is** a scoped, post-mortem recorder with a first-class viewer, evolving toward time-travel
 debugging. **It is not** an APM, a live debugger (that's `pdb`), or a profiler.
 
-## Status — Phase 4 (total replay fidelity) ✅
+## Status — Phase 5 (reverse debugger) ✅
 
-Every phase through 4 is complete, end to end and fully tested: 0 (foundation), 1 (the full black box),
-1.5 (the TUI viewer), 2 (scoped time-travel), 3 (rungs 1–2 of re-execution) and 4 (deterministic I/O +
-thread/asyncio scheduling — see [deterministic I/O](#deterministic-io--phase-4) below).
+Every phase through 5 is complete, end to end and fully tested: 0 (foundation), 1 (the full black box),
+1.5 (the TUI viewer), 2 (scoped time-travel), 3 (rungs 1–2 of re-execution), 4 (deterministic I/O +
+thread/asyncio scheduling — see [deterministic I/O](#deterministic-io--phase-4) below) and 5 (the reverse
+debugger + DAP — see [reverse debugging](#reverse-debugging--phase-5) below).
 
 **The engine (Rust):**
 - **`flight-format`** — the versioned, append-only, truncation-tolerant `.flight` format: header,
@@ -276,6 +277,37 @@ inside the scope are tracked (the runtime's own locks are left intact), non-bloc
 ordered, and data races on *unlocked* state are outside any lock-based record/replay. A safety timeout
 turns a replay deadlock into a `ReplayDivergence`, never a hang.
 
+### Reverse debugging — Phase 5
+
+Phase 2 records every state write of a `with flight.record()` block with its exact line and sequence
+number. Phase 5 turns that into a **reverse debugger**: a cursor you can step **backward** through, and a
+**breakpoint in the past** — "jump to the write where `running` first passed 100":
+
+```python
+tt = flight.time_travel("scope.flight")   # starts at the end (post-mortem stance)
+step = tt.find_first("running > 100")      # the breakpoint in the past
+print(step.describe(), tt.state()["locals"]["running"])   # → the write, and the value there
+tt.step_back(); tt.step_forward()          # walk the timeline
+```
+
+`state()` reconstructs the locals **and** watched-container contents at the cursor (event sourcing). The
+condition parser is safe (no `eval`; an invalid comparison never crashes the session, P1), and there are
+line breakpoints and watchpoints with `continue_forward` / `continue_back`.
+
+**In your editor, for free.** `flight debug scope.flight` starts a **DAP** (Debug Adapter Protocol) server
+on stdio. Because the adapter advertises `supportsStepBack`, VS Code and PyCharm show the **Step Back** and
+**Reverse** buttons and drive them against the recording — locals, the mutation timeline and the past
+breakpoint all navigable, no live process. Or answer a query straight from the shell:
+
+```console
+$ python -m flight debug scope.flight --find "running > 100"
+first match: #10 tt.py:5 local running = 136
+  state there: it=120, running=136
+```
+
+Honest scope: it operates on scope recordings (Phase 2's mutation timeline), at line granularity;
+sub-line detail awaits the native bytecode instrumentation ([TECHNICAL.md](TECHNICAL.md) §3.2).
+
 ## Roadmap ahead — Phases 4–10
 
 The compass: **fidelity → experience → intelligence → reach**. Every phase keeps the five inviolables
@@ -288,10 +320,11 @@ The compass: **fidelity → experience → intelligence → reach**. Every phase
   of its inputs *and the order the world answered in*. Honest limits: only user-created locks are tracked,
   timed/non-blocking acquires aren't ordered, and data races on unlocked state are out of scope;
   multiprocessing is future work.
-- **Phase 5 — A real reverse debugger.** We already have `state_at(seq)`; the missing piece is the
-  *experience*: **step-backward** and a "breakpoint in the past" ("stop when `running` passed 100"), with
-  the UI reconstructing locals at that instant. Combined with native bytecode instrumentation (TECHNICAL
-  §3.2) for **sub-line** granularity, exposed over **DAP** — VS Code and PyCharm for free.
+- **Phase 5 — A real reverse debugger. ✅ Done.** **Step-backward** and a "breakpoint in the past" ("jump
+  to where `running` passed 100") over the mutation timeline, exposed over **DAP** (`supportsStepBack` →
+  Step Back / Reverse in VS Code and PyCharm) and on the CLI (`flight debug`). See
+  [reverse debugging](#reverse-debugging--phase-5) above. Sub-line granularity (native bytecode, TECHNICAL
+  §3.2) is future work.
 - **Phase 6 — Debugging by comparison.** `flight diff run_ok.flight run_fail.flight` points at the **first
   diverging mutation/event**; plus **automatic delta debugging** (ddmin over the tape) shrinking a crash to
   its minimal reproducer: "your bug needs only these 3 of the 500 recorded values."
@@ -343,6 +376,8 @@ python -m flight inspect crash.flight
 python -m flight view crash.flight        # interactive TUI (needs the [viewer] extra)
 python -m flight timeline scope.flight    # a scope recording's mutation timeline
 python -m flight repro crash.flight       # generate + verify a reproduction script
+python -m flight debug scope.flight       # reverse debugger: DAP server (VS Code / PyCharm)
+python -m flight debug scope.flight --find "running > 100"   # a breakpoint in the past, on the CLI
 ```
 
 Configuration (`flight.Config`): `ring_capacity`, `output_dir`, `dump_on_crash`, `record_lines`,
@@ -440,6 +475,8 @@ python/flight/
   _io.py           deterministic I/O: file/pipe/subprocess/socket reads, hash-of-rest (Phase 4)
   _asyncio.py      asyncio task-completion order record + replay check (Phase 4)
   _threads.py      thread lock-acquisition order record + replay enforcement (Phase 4)
+  _timetravel.py   reverse-debugger engine: cursor, breakpoint-in-the-past (Phase 5)
+  _dap.py          Debug Adapter Protocol server over the engine (Phase 5)
   _read.py, _cli.py, _config.py
 tests/             Python tests (serializer, capture, reader, CLI)
 scripts/bench.py   overhead baseline

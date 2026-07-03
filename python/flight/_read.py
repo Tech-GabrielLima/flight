@@ -204,6 +204,12 @@ class Flight:
         ]
         return Recording(muts)
 
+    def time_travel(self):
+        """Open this scope recording as a reverse debugger (Phase 5)."""
+        from ._timetravel import TimeTravel
+
+        return TimeTravel(self.recording())
+
     def crash(self) -> Crash:
         """Load the full crash detail (frames, locals, object graph, source)."""
         d = dict(_core.read_crash(str(self.path)))
