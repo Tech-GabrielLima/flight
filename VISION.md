@@ -89,7 +89,7 @@ vêm redigidos por default.
 | 1.5 | Viewer | TUI navegável: frames → locals → grafo de objetos → código com valores inline | ✅ **concluída** |
 | 2 | Time-travel de escopo | `with flight.record():` grava escritas de estado; histórico por variável; "quem mutou" | ✅ **concluída** |
 | 3 | Re-execução | Repro automático verificado; replay determinístico (time/random/uuid/…) | ✅ **degraus 1–2** (degrau 3, threads: pesquisa) |
-| 4 | Fidelidade total de replay | Fechar o degrau 3: interpor arquivos/sockets/subprocess + **ordem** de locks/tasks (threads e asyncio) → replay multi-thread bit a bit | 🔜 planejada |
+| 4 | Fidelidade total de replay | Fechar o degrau 3: interpor arquivos/sockets/subprocess + **ordem** de locks/tasks (threads e asyncio) → replay multi-thread bit a bit | 🟡 **fatia 4a entregue** (arquivos/pipes/subprocess + asyncio; sockets/threads: próxima fatia) |
 | 5 | Depurador reverso de verdade | *Step-backward* + "breakpoint no passado" sobre `state_at(seq)`; exposição via **DAP** (VS Code / PyCharm); granularidade sub-linha via bytecode nativo | 🔜 planejada |
 | 6 | Debugging por comparação | `flight diff a.flight b.flight` (primeira divergência) + **delta debugging** (ddmin sobre a fita → repro mínimo) | 🔜 planejada |
 | 7 | Camada de inteligência | `flight explain` (causa-raiz + patch por LLM), `flight repro --pytest`, query semântica na timeline, dedup por frame+estado | 🔜 planejada |
@@ -199,6 +199,20 @@ programa é função determinística das suas entradas *e da ordem em que o mund
 e o replay multi-thread passa a repetir bit a bit. Entregável: `flight.deterministic()` cobrindo o **crash
 flaky de concorrência** — o pesadelo #1 de todo dev. Parte difícil honesta: I/O grande infla o arquivo →
 provavelmente um modo "grava só o que foi lido, com hash do resto" para conciliar fidelidade e tamanho.
+
+> **Fatia 4a — entregue.** `flight.deterministic()` agora grava, além dos escalares (relógio/random/uuid),
+> **o que o código leu**: arquivos (texto/binário, `read`/`readline`/`readinto`/iteração), pipes (`os.read`)
+> e a saída de subprocessos (`subprocess.run`/`check_output`) — cada leitura é uma entrada na mesma fita
+> `seq`-ordenada (`_io.py`), com **numeração de canal por ordem de `open`** para não cruzar arquivos
+> interleavados. `flight.replay()` reproduz **offline**: as leituras vêm da fita e as **escritas são
+> engolidas** (nenhum efeito colateral real no disco). O modo **"grava só o que foi lido, com hash do
+> resto"** está implementado: leituras acima de `io_hash_above` bytes viram *comprimento + digest BLAKE2b*
+> (arquivo minúsculo), e no replay a fonte viva é relida e **verificada** contra o digest;
+> `io_hash_above=0` inlina tudo para replay 100% offline. Para **asyncio**, gravamos a **ordem de conclusão
+> das tasks** e a **verificamos** no replay (`_asyncio.py`): como o determinismo vem de reproduzir
+> tempo+I/O, a verificação detecta e aponta qualquer divergência de escalonamento residual (detector, ainda
+> não *impositor*). **Próxima fatia (4b):** sockets (`recv`/`recv_into`) e a imposição de ordem para
+> **threads reais** (lock/GIL) — o núcleo research da fase.
 
 **Fase 5 — O depurador reverso de verdade.** Já temos `state_at(seq)` (event sourcing); falta a
 *experiência*: **step-backward**. Um viewer/DAP onde se anda para trás no tempo, coloca um "breakpoint no

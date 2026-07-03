@@ -211,9 +211,43 @@ Interposed boundaries: `time.*`, `random.*`, `uuid4`, `os.urandom`/`getpid`/`get
 randomness into one file, so `flight repro` weaves the tape into the generated script — reproducing a
 **flaky, timing/random-dependent crash deterministically, every run**.
 
-Honest scope (rung 3): replay is guaranteed for single-thread / single-asyncio-loop code; files,
-sockets and subprocess are recognized but staged (their state is larger). The clock / randomness / uuid
-class — flaky tests, time bombs, "fails 1% of the time" — is covered.
+Honest scope (rung 3): replay is guaranteed for single-thread / single-asyncio-loop code; the clock /
+randomness / uuid class — flaky tests, time bombs, "fails 1% of the time" — is covered. Files, pipes,
+subprocess and asyncio are now covered too (Phase 4a, below); sockets and real-thread ordering are staged.
+
+### Deterministic I/O — Phase 4a
+
+Scalar boundaries (clock/random/uuid) are only half of what makes a program non-deterministic; the rest is
+**what it read from the world**. `flight.deterministic()` now records that too — file reads, `os.read`
+pipes and subprocess output — as more entries on the same tape, so an I/O-dependent run replays **offline,
+bit-for-bit**, even on a machine that no longer has those files:
+
+```python
+import flight
+
+def load():
+    with open("config.json") as f:      # a file read…
+        cfg = f.read()
+    out = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
+    return cfg, out.stdout               # …and a subprocess: both recorded
+
+with flight.deterministic("run.flight"):
+    original = load()
+
+# On another machine, with no config.json and no git — it still repeats:
+assert flight.replay("run.flight", load) == original
+```
+
+Reads are keyed by an open-order **channel id**, so several files read interleaved never cross wires. On
+replay, reads come from the tape and **writes are swallowed** — replaying a run that wrote to disk never
+touches the disk. **Record what was read, hash the rest:** a read larger than `io_hash_above` bytes
+(default 256 KiB) is stored as its length + a BLAKE2b digest instead of its content, keeping the `.flight`
+tiny; on replay the live source is re-read and **verified** against the digest (a changed or missing source
+raises `ReplayDivergence`). Pass `io_hash_above=0` to inline everything for fully offline replay.
+
+For **asyncio**, the task-**completion order** is recorded and checked on replay: since determinism comes
+from replaying time and I/O, this pinpoints any residual scheduling divergence at the task level. Sockets
+and real-thread (lock/GIL) ordering are the next slice (4b).
 
 ## Roadmap ahead — Phases 4–10
 
@@ -226,6 +260,8 @@ The compass: **fidelity → experience → intelligence → reach**. Every phase
   of its inputs *and the order the world answered in* — record that order and multi-thread replay repeats
   bit-for-bit. Deliverable: `flight.deterministic()` covering the **flaky concurrency crash**. Honest hard
   part: large I/O bloats the file → a "record only what was read, hash the rest" mode.
+  **Slice 4a is done** (see [deterministic I/O](#deterministic-io--phase-4a) below); slice 4b is sockets
+  and real-thread ordering.
 - **Phase 5 — A real reverse debugger.** We already have `state_at(seq)`; the missing piece is the
   *experience*: **step-backward** and a "breakpoint in the past" ("stop when `running` passed 100"), with
   the UI reconstructing locals at that instant. Combined with native bytecode instrumentation (TECHNICAL
@@ -375,6 +411,8 @@ python/flight/
   _viewer_model.py rendering-free viewer logic (inline values, aliases)
   _repro.py        crash → self-contained verified reproduction (Phase 3, rung 1)
   _nondet.py       deterministic record/replay of non-determinism (Phase 3, rung 2)
+  _io.py           deterministic I/O: file/pipe/subprocess reads, hash-of-rest (Phase 4a)
+  _asyncio.py      asyncio task-completion order record + replay check (Phase 4a)
   _read.py, _cli.py, _config.py
 tests/             Python tests (serializer, capture, reader, CLI)
 scripts/bench.py   overhead baseline

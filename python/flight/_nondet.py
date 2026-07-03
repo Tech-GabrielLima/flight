@@ -145,25 +145,44 @@ class Tape:
             counts[src] = counts.get(src, 0) + 1
         return counts
 
-    def take(self, source: str):
-        """Return the next recorded value, checking it was for `source`."""
+    def _next(self, source: str) -> tuple[str, str]:
+        """Advance past the next entry, checking it was for `source`; return
+        its raw ``(tag, payload)``. Raises :class:`ReplayDivergence` on any
+        mismatch — the exact step where control flow left the recorded run."""
         if self._cursor >= len(self._entries):
             raise ReplayDivergence(
                 f"the recording is exhausted, but the code called {source!r} "
                 f"(step {self._cursor}) — control flow diverged from the recorded run"
             )
-        seq, src, tag, payload = self._entries[self._cursor]
+        _seq, src, tag, payload = self._entries[self._cursor]
         if src != source:
             raise ReplayDivergence(
                 f"at step {self._cursor}: the recording has {src!r} but the code "
                 f"called {source!r} — control flow diverged from the recorded run"
             )
         self._cursor += 1
+        return tag, payload
+
+    def take(self, source: str):
+        """Return the next recorded value, checking it was for `source`."""
+        tag, payload = self._next(source)
         if tag == "!":
             # The recorded call raised; re-raise the same exception type so the
             # code's control flow (its except clauses) replays faithfully.
             raise _reconstruct_exc(payload)
         return _decode(tag, payload)
+
+    def peek_source(self) -> Optional[str]:
+        """The `source` of the next entry, or None if the tape is exhausted."""
+        if self._cursor >= len(self._entries):
+            return None
+        return self._entries[self._cursor][1]
+
+    def take_raw(self, source: str) -> tuple[str, str]:
+        """Like :meth:`take` but return the raw ``(tag, payload)`` — for I/O
+        channels (`_io`) that own their own codec (bytes, text, hashed reads)
+        and reconstruct richer objects than the scalar value codec."""
+        return self._next(source)
 
 
 # -- interposition ----------------------------------------------------------
@@ -201,55 +220,103 @@ class _Recorder:
         self.entries: list[tuple[int, str, str, str]] = []
         self._seq = 0
         # Reentrancy guard: some boundaries call others internally (uuid4 uses
-        # os.urandom). We record only the *outermost* interposed call, so each
-        # boundary is atomic and replay — which short-circuits the outer call
-        # and never makes the inner one — sees the exact same tape.
+        # os.urandom; subprocess.run reads pipes via os.read). We record only
+        # the *outermost* interposed call, so each boundary is atomic and replay
+        # — which short-circuits the outer call and never makes the inner one —
+        # sees the exact same tape. The guard is shared across the scalar
+        # boundaries here and the I/O channels in `_io` (one tape, one order).
         self._depth = 0
 
     def _record(self, source, tag, payload):
         self.entries.append((self._seq, source, tag, payload))
         self._seq += 1
 
+    # -- shared guarded recording (used by scalar boundaries and by `_io`) ---
+
+    def is_outermost(self) -> bool:
+        return self._depth == 0
+
+    def enter(self) -> bool:
+        """Enter an interposed call; returns True if it is the outermost one."""
+        outermost = self._depth == 0
+        self._depth += 1
+        return outermost
+
+    def leave(self) -> None:
+        self._depth -= 1
+
+    def record_value(self, source, result) -> None:
+        try:
+            tag, payload = _encode(result)
+        except Exception:
+            tag, payload = "r", repr(result)
+        self._record(source, tag, payload)
+
+    def record_raw(self, source, tag, payload) -> None:
+        """Record a pre-encoded entry (I/O channels own their own codec)."""
+        self._record(source, tag, payload)
+
+    def record_exc(self, source, exc) -> None:
+        self._record(source, "!", type(exc).__name__)
+
     def make_wrapper(self, source, orig):
         def wrapper(*args, **kwargs):
-            outermost = self._depth == 0
-            self._depth += 1
+            outermost = self.enter()
             try:
                 result = orig(*args, **kwargs)
             except BaseException as e:
-                self._depth -= 1
+                self.leave()
                 # A boundary that *raises* is part of the behaviour to replay
                 # (e.g. random.randint(5, 1) -> ValueError caught by the code).
                 if outermost:
-                    self._record(source, "!", type(e).__name__)
+                    self.record_exc(source, e)
                 raise
-            self._depth -= 1
+            self.leave()
             if outermost:
-                try:
-                    tag, payload = _encode(result)
-                except Exception:
-                    tag, payload = "r", repr(result)
-                self._record(source, tag, payload)
+                self.record_value(source, result)
             return result
 
         return wrapper
 
 
+#: Default: reads larger than this many bytes are stored as length+digest
+#: ("record what was read, hash the rest") instead of inline content.
+DEFAULT_IO_HASH_ABOVE = 256 * 1024
+
+
 class _Deterministic:
     """Context manager returned by :func:`deterministic`."""
 
-    def __init__(self, path=None):
+    def __init__(self, path=None, *, record_io: bool = True, io_hash_above: Optional[int] = None):
         self.path = path
         self._recorder = _Recorder()
         self._interposer = _Interposer(self._recorder.make_wrapper)
         self.path_written: Optional[str] = None
+        self._record_io = record_io
+        hash_above = DEFAULT_IO_HASH_ABOVE if io_hash_above is None else io_hash_above
+        self._io = None
+        self._aio = None
+        if record_io:
+            from ._io import IORecorder
+            from ._asyncio import AsyncioRecorder
+
+            self._io = IORecorder(self._recorder, hash_above)
+            self._aio = AsyncioRecorder(self._recorder)
 
     def __enter__(self) -> "_Deterministic":
         self._interposer.install()
+        if self._io is not None:
+            self._io.install()
+            self._aio.install()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool:
+        if self._io is not None:
+            self._io.uninstall()
+            self._aio.uninstall()
         self._interposer.uninstall()
+        if self._aio is not None:
+            self._aio.finalize()  # append the asyncio completion-order entry
         # If the block crashed, capture the crash black box *and* the tape into
         # one file, so `flight repro` can rebuild the args AND replay the exact
         # non-determinism — reproducing a time/random-dependent crash.
@@ -312,18 +379,26 @@ class _Deterministic:
             self._write()
 
 
-def deterministic(path=None) -> _Deterministic:
+def deterministic(path=None, *, record_io: bool = True, io_hash_above=None) -> _Deterministic:
     """Record the non-determinism of the enclosed block into a `.flight`.
 
         with flight.deterministic("run.flight"):
-            result = do_work()          # uses time / random / uuid …
+            result = do_work()          # uses time / random / uuid / files …
 
     Replay it later — even in another process — and it re-runs bit-for-bit::
 
         replayed = flight.replay("run.flight", do_work)
         assert replayed == result
+
+    Beyond the scalar boundaries (clock/random/uuid), `record_io=True` (default)
+    also records **what the code read** — files, ``os.read`` pipes and
+    subprocess output — plus the asyncio task-completion order, so an I/O- or
+    schedule-dependent run replays too. Reads larger than ``io_hash_above`` bytes
+    are stored as a length + digest instead of their content (verified against
+    the live source on replay); pass ``io_hash_above=0`` to inline everything for
+    fully offline replay.
     """
-    return _Deterministic(path)
+    return _Deterministic(path, record_io=record_io, io_hash_above=io_hash_above)
 
 
 def replay(flight_path, fn, *args, **kwargs):
@@ -337,12 +412,29 @@ def replay(flight_path, fn, *args, **kwargs):
 
 
 def replay_tape(tape: Tape, fn, *args, **kwargs):
-    """Like :func:`replay`, but from an in-memory :class:`Tape`."""
+    """Like :func:`replay`, but from an in-memory :class:`Tape`.
+
+    Interposes the same scalar boundaries *and* the I/O channels (files,
+    ``os.read``, subprocess) and asyncio scheduling, so a run that read files or
+    spawned processes replays without touching the real world — reads come from
+    the tape, writes are swallowed. Raises :class:`ReplayDivergence` at the exact
+    step the code's calls leave the recorded order."""
+    from ._io import IOReplayer
+    from ._asyncio import AsyncioReplayer
+
     interposer = _Interposer(lambda source, orig: _replay_wrapper(tape, source))
+    io = IOReplayer(tape)
+    aio = AsyncioReplayer(tape)
     interposer.install()
+    io.install()
+    aio.install()
     try:
-        return fn(*args, **kwargs)
+        result = fn(*args, **kwargs)
+        aio.finalize()  # verify the asyncio completion order matched
+        return result
     finally:
+        io.uninstall()
+        aio.uninstall()
         interposer.uninstall()
 
 
