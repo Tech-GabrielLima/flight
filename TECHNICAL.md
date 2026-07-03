@@ -246,6 +246,11 @@ Fase 5   ✅ depurador reverso: engine time-travel (_timetravel.py) sobre a Reco
             parser de condição seguro, line-bp/watchpoint continue_forward/back); DAP (_dap.py) com
             supportsStepBack (stepBack/reverseContinue → VS Code/PyCharm); CLI `flight debug [--find|--list]`.
             Por-linha; sub-linha = bytecode nativo (§3.2), futuro.
+Fase 6   ✅ debugging por comparação. flight diff (_diff.py): alinha 2 gravações posição-a-posição, 1ª
+            divergência no eixo mais rico (MUTATION timeline / NONDET tape / event ring); source-mismatch
+            = fluxo ramificou; CLI sai 1 se divergem. Delta-debug (_ddmin.py): ddmin de Zeller (puro) +
+            minimize_tape/flight.minimize — replaya neutralizando valores até o conjunto mínimo que ainda
+            falha; neutralização que ramifica → ReplayDivergence → "não reproduz" → valor mantido.
 Fase 5   🔜 depurador reverso: step-backward + breakpoint no passado sobre state_at(seq);
             bytecode nativo (§3.2) p/ sub-linha; exposição via DAP (VS Code/PyCharm).
 Fase 6   🔜 flight diff (primeira divergência) + delta debugging (ddmin sobre a fita).

@@ -28,6 +28,8 @@ from __future__ import annotations
 
 from ._adapters import Adapted, adapter
 from ._config import Config
+from ._ddmin import MinimizeResult, minimize
+from ._diff import Divergence, diff_files as diff
 from ._install import dump, install, is_installed, uninstall
 from ._nondet import ReplayDivergence, Tape, deterministic, replay, replay_tape
 from ._read import Crash, Flight, Frame, Mutation, Recording, read
@@ -40,8 +42,10 @@ __all__ = [
     "Adapted",
     "Config",
     "Crash",
+    "Divergence",
     "Flight",
     "Frame",
+    "MinimizeResult",
     "Mutation",
     "Recording",
     "ReplayDivergence",
@@ -52,9 +56,11 @@ __all__ = [
     "adapter",
     "capture",
     "deterministic",
+    "diff",
     "dump",
     "install",
     "is_installed",
+    "minimize",
     "read",
     "record",
     "replay",

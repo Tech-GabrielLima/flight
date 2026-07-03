@@ -103,6 +103,15 @@ para a escrita que primeiro satisfez a condição (parser seguro, sem `eval`). E
 `flight debug arquivo.flight` (servidor DAP) ou `--find "running > 100"` / `--list`. Granularidade por-linha
 (sub-linha depende do bytecode nativo, fase futura).
 
+**Fase 6 — debugging por comparação (concluída).** `flight diff a.flight b.flight` (`_diff.py`) alinha duas
+gravações **posição a posição** e aponta a primeira divergência, no eixo mais rico que ambas compartilham:
+timeline de MUTATION (primeira escrita cujo alvo/valor difere), fita NONDET (primeira chamada de fronteira
+que respondeu diferente; mismatch de *source* = fluxo ramificou — a raiz de um teste flaky) ou o ring de
+eventos. Sai com código 1 quando divergem (como o `diff(1)`). **Delta debugging** (`_ddmin.py`): o `ddmin`
+de Zeller ligado ao replay — `flight.minimize(path, fn)` substitui valores gravados por um default neutro e
+mantém só as reduções que ainda falham, até sobrar o conjunto mínimo *load-bearing*: "seu bug precisa só
+destes N valores". `ddmin` genérico é função pura testada à parte.
+
 ## Roadmap adiante — Fases 4–10
 
 A bússola: **fidelidade → experiência → inteligência → alcance**. Toda fase mantém os cinco invioláveis

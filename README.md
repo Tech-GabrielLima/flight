@@ -69,12 +69,13 @@ Three bets underpin the project (see [VISION.md](VISION.md)):
 **It is** a scoped, post-mortem recorder with a first-class viewer, evolving toward time-travel
 debugging. **It is not** an APM, a live debugger (that's `pdb`), or a profiler.
 
-## Status — Phase 5 (reverse debugger) ✅
+## Status — Phase 6 (debugging by comparison) ✅
 
-Every phase through 5 is complete, end to end and fully tested: 0 (foundation), 1 (the full black box),
+Every phase through 6 is complete, end to end and fully tested: 0 (foundation), 1 (the full black box),
 1.5 (the TUI viewer), 2 (scoped time-travel), 3 (rungs 1–2 of re-execution), 4 (deterministic I/O +
-thread/asyncio scheduling — see [deterministic I/O](#deterministic-io--phase-4) below) and 5 (the reverse
-debugger + DAP — see [reverse debugging](#reverse-debugging--phase-5) below).
+thread/asyncio scheduling — see [deterministic I/O](#deterministic-io--phase-4) below), 5 (the reverse
+debugger + DAP — see [reverse debugging](#reverse-debugging--phase-5) below) and 6 (`flight diff` +
+delta debugging — see [debugging by comparison](#debugging-by-comparison--phase-6) below).
 
 **The engine (Rust):**
 - **`flight-format`** — the versioned, append-only, truncation-tolerant `.flight` format: header,
@@ -308,13 +309,47 @@ first match: #10 tt.py:5 local running = 136
 Honest scope: it operates on scope recordings (Phase 2's mutation timeline), at line granularity;
 sub-line detail awaits the native bytecode instrumentation ([TECHNICAL.md](TECHNICAL.md) §3.2).
 
+### Debugging by comparison — Phase 6
+
+Two recordings of the "same" program — one that worked, one that failed — carry *why* between them: the
+**first point they diverged**. `flight diff` aligns them position by position and reports it, on the
+richest axis the two files share:
+
+```console
+$ python -m flight diff run_ok.flight run_fail.flight
+comparing nondets: diverged at step 7 (12 steps compared)
+  random.random answered differently
+  left : random.random [f] 0.8313
+  right: random.random [f] 0.1174
+```
+
+For scope recordings it's the first mutation whose target or value differs; for deterministic tapes it's
+the first boundary call that answered differently (a *source* mismatch means control flow branched — the
+root of a flaky test); otherwise the first ring event that took a different path. `flight diff` exits
+non-zero when they differ, like `diff(1)`, so it drops into CI.
+
+**Delta debugging — the minimal reproducer.** A deterministic `.flight` may hold hundreds of recorded
+values, but usually only a few *cause* the failure. `flight.minimize` runs Zeller's **ddmin** over the
+tape — replaying with more and more values replaced by a neutral default, keeping only the reductions that
+still fail — until every remaining original value is load-bearing:
+
+```python
+res = flight.minimize("crash.flight", work)   # work: the same fn you'd replay
+print(res.render())
+# minimal reproducer: 1 of 6 recorded values matter (5 neutralized)
+#   #3 random.randint [i] = 95      ← the only value your bug actually needs
+```
+
+Neutralizing a value that changes control flow makes the replay diverge — read as "didn't reproduce" — so
+that value is correctly kept. The generic `ddmin` is a pure function, unit-tested on its own.
+
 ## Roadmap ahead — Phases 4–10
 
 The compass: **fidelity → experience → intelligence → reach**. Every phase keeps the five inviolables
 (P1–P5) and stays useful on its own (P4). Full contracts live in [VISION.md](VISION.md) §5.6.
 
 - **Phase 4 — Total replay fidelity (close rung 3). ✅ Done.** Files, pipes, subprocess, sockets and the
-  asyncio/thread schedule are now recorded and replayed offline (see [deterministic I/O](#deterministic-io--phase-4a)
+  asyncio/thread schedule are now recorded and replayed offline (see [deterministic I/O](#deterministic-io--phase-4)
   below). The key trick for concurrency: record the *order* of lock acquisition (threads numbered in start
   order), not the scheduler's internals, and enforce it on replay — a program is a deterministic function
   of its inputs *and the order the world answered in*. Honest limits: only user-created locks are tracked,
@@ -325,9 +360,10 @@ The compass: **fidelity → experience → intelligence → reach**. Every phase
   Step Back / Reverse in VS Code and PyCharm) and on the CLI (`flight debug`). See
   [reverse debugging](#reverse-debugging--phase-5) above. Sub-line granularity (native bytecode, TECHNICAL
   §3.2) is future work.
-- **Phase 6 — Debugging by comparison.** `flight diff run_ok.flight run_fail.flight` points at the **first
-  diverging mutation/event**; plus **automatic delta debugging** (ddmin over the tape) shrinking a crash to
-  its minimal reproducer: "your bug needs only these 3 of the 500 recorded values."
+- **Phase 6 — Debugging by comparison. ✅ Done.** `flight diff run_ok.flight run_fail.flight` points at the
+  **first diverging mutation / boundary call / event**; plus **delta debugging** (`flight.minimize`, ddmin
+  over the tape) shrinking a crash to its minimal reproducer: "your bug needs only these 3 of the 500
+  recorded values." See [debugging by comparison](#debugging-by-comparison--phase-6) above.
 - **Phase 7 — The intelligence layer.** A `.flight` is the perfect structured context for an LLM.
   `flight explain` (root cause + suggested patch), `flight repro --pytest` (a committable regression test),
   semantic queries over the timeline, and Sentry-style dedup by **common frame + state**.
@@ -378,6 +414,7 @@ python -m flight timeline scope.flight    # a scope recording's mutation timelin
 python -m flight repro crash.flight       # generate + verify a reproduction script
 python -m flight debug scope.flight       # reverse debugger: DAP server (VS Code / PyCharm)
 python -m flight debug scope.flight --find "running > 100"   # a breakpoint in the past, on the CLI
+python -m flight diff run_ok.flight run_fail.flight          # first point two runs diverged
 ```
 
 Configuration (`flight.Config`): `ring_capacity`, `output_dir`, `dump_on_crash`, `record_lines`,
@@ -477,6 +514,8 @@ python/flight/
   _threads.py      thread lock-acquisition order record + replay enforcement (Phase 4)
   _timetravel.py   reverse-debugger engine: cursor, breakpoint-in-the-past (Phase 5)
   _dap.py          Debug Adapter Protocol server over the engine (Phase 5)
+  _diff.py         flight diff: first divergence of two recordings (Phase 6)
+  _ddmin.py        delta debugging (ddmin) → minimal reproducer (Phase 6)
   _read.py, _cli.py, _config.py
 tests/             Python tests (serializer, capture, reader, CLI)
 scripts/bench.py   overhead baseline

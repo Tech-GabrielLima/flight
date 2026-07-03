@@ -157,6 +157,11 @@ class Tape:
             [{"seq": s, "source": src, "tag": t, "payload": p} for s, src, t, p in self._entries]
         )
 
+    def rows(self) -> list[tuple]:
+        """The recorded entries as ``(seq, source, tag, payload)`` tuples, in
+        order — for tools that compare or minimize tapes (`_diff`, `_ddmin`)."""
+        return list(self._entries)
+
     def sources(self) -> dict[str, int]:
         counts: dict[str, int] = {}
         for _s, src, _t, _p in self._entries:

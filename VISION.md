@@ -91,7 +91,7 @@ vêm redigidos por default.
 | 3 | Re-execução | Repro automático verificado; replay determinístico (time/random/uuid/…) | ✅ **degraus 1–2** (degrau 3, threads: pesquisa) |
 | 4 | Fidelidade total de replay | Fechar o degrau 3: interpor arquivos/sockets/subprocess + **ordem** de locks/tasks (threads e asyncio) → replay multi-thread bit a bit | ✅ **concluída** (4a arquivos/pipes/subprocess + asyncio; 4b sockets + ordem de locks entre threads) |
 | 5 | Depurador reverso de verdade | *Step-backward* + "breakpoint no passado" sobre `state_at(seq)`; exposição via **DAP** (VS Code / PyCharm); granularidade sub-linha via bytecode nativo | ✅ **concluída** (engine + DAP com `supportsStepBack`; sub-linha via bytecode = futuro) |
-| 6 | Debugging por comparação | `flight diff a.flight b.flight` (primeira divergência) + **delta debugging** (ddmin sobre a fita → repro mínimo) | 🔜 planejada |
+| 6 | Debugging por comparação | `flight diff a.flight b.flight` (primeira divergência) + **delta debugging** (ddmin sobre a fita → repro mínimo) | ✅ **concluída** (`flight diff` + `flight.minimize` via ddmin) |
 | 7 | Camada de inteligência | `flight explain` (causa-raiz + patch por LLM), `flight repro --pytest`, query semântica na timeline, dedup por frame+estado | 🔜 planejada |
 | 8 | Caixa-preta de produção | Governador adaptativo de overhead (SLO), daemon always-on + flush no crash (sobrevive a SIGKILL/OOM), correlação distribuída (OpenTelemetry) | 🔜 planejada |
 | 9 | Laço viral e ecossistema | Viewer no browser (reader Rust → WASM), plugin pytest, GitHub Action, middleware Django/FastAPI/Flask, recorders cross-language, cripto em repouso | 🔜 planejada |
@@ -257,6 +257,20 @@ já existe:
   consegue.
 - **Delta debugging automático** — dado um crash com a fita determinística, encolher as entradas gravadas
   até o reprodutor mínimo (**ddmin** sobre a tape): "seu bug precisa só destes 3 valores dos 500 gravados".
+
+> **Entregue.** `flight diff a.flight b.flight` (`_diff.py`) alinha duas gravações **posição a posição** e
+> reporta a primeira divergência, escolhendo o eixo mais rico que ambas compartilham: **timeline de MUTATION**
+> (a primeira escrita cujo alvo/valor difere), **fita NONDET** (a primeira chamada de fronteira que respondeu
+> diferente — mismatch de *source* = fluxo de controle ramificou, a raiz de um teste flaky) ou o **ring de
+> eventos**. CLI `flight diff` sai com código 1 quando divergem (como o `diff(1)`), útil em CI. O **delta
+> debugging** (`_ddmin.py`) é o `ddmin` clássico de Zeller (puro e testado à parte) ligado ao motor de
+> replay: `flight.minimize(path, fn)` reexecuta `fn` sob a fita com cada vez mais valores gravados
+> substituídos por um **default neutro**, mantendo só as reduções que ainda reproduzem a falha, até sobrar o
+> conjunto mínimo de valores *load-bearing* — "seu bug precisa só destes N valores". Neutralizar um valor que
+> muda o fluxo de controle faz o replay divergir, o que o predicado lê como "não reproduziu", então esse
+> valor é corretamente mantido. Predicado padrão = ainda levanta exceção; customizável. **Escopo honesto:**
+> `minimize` é API Python (precisa da `fn` a reexecutar, como o `replay`); a integração de linha de comando
+> (reconstruir a `fn` via `repro`) fica para depois.
 
 **Fase 7 — A camada de inteligência (o diferencial de 2026).** Um `.flight` é o **contexto estruturado
 perfeito** para um LLM — infinitamente melhor que um traceback solto. Sobre isso:

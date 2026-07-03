@@ -166,6 +166,17 @@ def _cmd_repro(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_diff(args: argparse.Namespace) -> int:
+    """Compare two `.flight` files and report the first point they diverged."""
+    from ._diff import diff_files
+
+    d = diff_files(args.left, args.right)
+    print(d.render())
+    if d.kind == "incomparable":
+        return 2
+    return 1 if not d.identical else 0  # like diff(1): nonzero when they differ
+
+
 def _cmd_debug(args: argparse.Namespace) -> int:
     """Reverse-debug a scope `.flight`. With `--find`, answer a "breakpoint in
     the past" query on the command line; otherwise start a DAP server on stdio
@@ -258,6 +269,13 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("-o", "--output", help="output script path (default repro_bug.py)")
     rp.add_argument("--no-verify", action="store_true", help="don't run it to verify")
     rp.set_defaults(func=_cmd_repro)
+
+    df = sub.add_parser(
+        "diff", help="compare two .flight files and report the first divergence"
+    )
+    df.add_argument("left", help="the first .flight file (e.g. a run that worked)")
+    df.add_argument("right", help="the second .flight file (e.g. a run that failed)")
+    df.set_defaults(func=_cmd_diff)
 
     dbg = sub.add_parser(
         "debug", help="reverse-debug a scope .flight (DAP server, or --find a past breakpoint)"
