@@ -235,4 +235,17 @@ Fase 2  ✅  with flight.record(): MUTATION via LINE-diff + watch(); timeline (h
 Fase 1.5 ✅ Viewer Textual (frames→locais→grafo→código inline→ring→timeline) sobre o reader.
 Fase 3   ✅ degrau 1 (repro verificado) + degrau 2 (replay determinístico) + convergência.
             degrau 3 (threads) = pesquisa; arquivos/sockets estagiados.
+Fase 4   🔜 fidelidade total: interpor arquivos/sockets/subprocess + ORDEM de locks/tasks
+            (threads+asyncio) → replay multi-thread bit a bit; I/O grande = "lê e faz hash do resto".
+Fase 5   🔜 depurador reverso: step-backward + breakpoint no passado sobre state_at(seq);
+            bytecode nativo (§3.2) p/ sub-linha; exposição via DAP (VS Code/PyCharm).
+Fase 6   🔜 flight diff (primeira divergência) + delta debugging (ddmin sobre a fita).
+Fase 7   🔜 inteligência: flight explain (LLM), repro --pytest, query semântica, dedup frame+estado.
+Fase 8   🔜 produção: governador de overhead (SLO), daemon + flush no crash (sobrevive SIGKILL/OOM),
+            correlação distribuída (OpenTelemetry).
+Fase 9   🔜 ecossistema: viewer WASM no browser, plugin pytest, GitHub Action, middleware web,
+            recorders cross-language, cripto em repouso.
+Fase 10  🔜 moonshot: what-if debugging (editar valor no passado e re-executar dali sobre a fita).
 ```
+
+Detalhamento de cada fase futura: VISION.md §5.6.

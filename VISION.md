@@ -89,6 +89,13 @@ vêm redigidos por default.
 | 1.5 | Viewer | TUI navegável: frames → locals → grafo de objetos → código com valores inline | ✅ **concluída** |
 | 2 | Time-travel de escopo | `with flight.record():` grava escritas de estado; histórico por variável; "quem mutou" | ✅ **concluída** |
 | 3 | Re-execução | Repro automático verificado; replay determinístico (time/random/uuid/…) | ✅ **degraus 1–2** (degrau 3, threads: pesquisa) |
+| 4 | Fidelidade total de replay | Fechar o degrau 3: interpor arquivos/sockets/subprocess + **ordem** de locks/tasks (threads e asyncio) → replay multi-thread bit a bit | 🔜 planejada |
+| 5 | Depurador reverso de verdade | *Step-backward* + "breakpoint no passado" sobre `state_at(seq)`; exposição via **DAP** (VS Code / PyCharm); granularidade sub-linha via bytecode nativo | 🔜 planejada |
+| 6 | Debugging por comparação | `flight diff a.flight b.flight` (primeira divergência) + **delta debugging** (ddmin sobre a fita → repro mínimo) | 🔜 planejada |
+| 7 | Camada de inteligência | `flight explain` (causa-raiz + patch por LLM), `flight repro --pytest`, query semântica na timeline, dedup por frame+estado | 🔜 planejada |
+| 8 | Caixa-preta de produção | Governador adaptativo de overhead (SLO), daemon always-on + flush no crash (sobrevive a SIGKILL/OOM), correlação distribuída (OpenTelemetry) | 🔜 planejada |
+| 9 | Laço viral e ecossistema | Viewer no browser (reader Rust → WASM), plugin pytest, GitHub Action, middleware Django/FastAPI/Flask, recorders cross-language, cripto em repouso | 🔜 planejada |
+| 10 | Moonshots | *What-if debugging*: editar um valor no passado e re-executar dali sobre a fita determinística — resultado contrafactual | 🔜 planejada |
 
 ### 5.1 Definição de "pronto" da Fase 0
 
@@ -178,6 +185,71 @@ Os três degraus do guia (§4), entregues em ordem:
   single-loop asyncio**. Interposição de arquivos/sockets/subprocess reconhecida porém estagiada
   (estado maior); a classe relógio/aleatoriedade/uuid — testes flaky, "falha 1% das vezes" — está coberta.
 - 38 testes Rust + 90 testes Python, todos verdes.
+
+### 5.6 Roadmap futuro — Fases 4–10
+
+O norte destas fases: **fidelidade → experiência → inteligência → alcance**. Cada uma continua obedecendo
+os cinco invioláveis (P1–P5) e a regra de que **toda fase é útil sozinha** (P4). O que segue é o contrato
+de cada fase — o "pronto" que vamos perseguir.
+
+**Fase 4 — Fidelidade total de replay (fechar o degrau 3).** É a base de tudo. Interpor as fronteiras que
+faltam — arquivos, sockets, subprocess — **e o escalonamento**. O truque decisivo: gravar a **ordem** de
+aquisição de locks e de retomada de tasks (threads e asyncio), não os dados internos do escalonador. Um
+programa é função determinística das suas entradas *e da ordem em que o mundo respondeu*; grave essa ordem
+e o replay multi-thread passa a repetir bit a bit. Entregável: `flight.deterministic()` cobrindo o **crash
+flaky de concorrência** — o pesadelo #1 de todo dev. Parte difícil honesta: I/O grande infla o arquivo →
+provavelmente um modo "grava só o que foi lido, com hash do resto" para conciliar fidelidade e tamanho.
+
+**Fase 5 — O depurador reverso de verdade.** Já temos `state_at(seq)` (event sourcing); falta a
+*experiência*: **step-backward**. Um viewer/DAP onde se anda para trás no tempo, coloca um "breakpoint no
+passado" ("pare quando `running` passou de 100") e a UI reconstrói os locais naquele instante. Combinado
+com a **instrumentação de bytecode nativa** que o TECHNICAL §3.2 já documenta como futuro, isso dá
+granularidade **sub-linha** e faz do flight um concorrente direto do `rr`/Pernosco — mas para Python e com
+o grafo de objetos junto. Exposição via **DAP (Debug Adapter Protocol)** ⇒ VS Code e PyCharm de graça.
+
+**Fase 6 — Debugging por comparação: `flight diff` + minimização.** Duas capacidades que multiplicam o que
+já existe:
+- `flight diff run_ok.flight run_falha.flight` — compara duas gravações e aponta a **primeira mutação/evento
+  onde divergiram**. Mata "funciona na minha máquina" e testes flaky de um jeito que traceback nenhum
+  consegue.
+- **Delta debugging automático** — dado um crash com a fita determinística, encolher as entradas gravadas
+  até o reprodutor mínimo (**ddmin** sobre a tape): "seu bug precisa só destes 3 valores dos 500 gravados".
+
+**Fase 7 — A camada de inteligência (o diferencial de 2026).** Um `.flight` é o **contexto estruturado
+perfeito** para um LLM — infinitamente melhor que um traceback solto. Sobre isso:
+- `flight explain crash.flight` → causa-raiz em linguagem natural + patch sugerido, alimentando o modelo
+  com frames + grafo + ring + source (tudo já consultável pelo reader).
+- `flight repro --pytest` → transforma o repro verificado num **caso de teste de regressão commitável**,
+  com as entradas do crash congeladas. O bug report vira proteção permanente.
+- **Query semântica** sobre a timeline: "quando `cache` passou de 100 entradas?" rodando sobre as mutações.
+- **Deduplicação** estilo Sentry, mas por **frame comum + estado**, não só por stack.
+
+**Fase 8 — A caixa-preta de produção (deixar ligado de verdade).** Hoje o overhead é honesto porém fixo.
+Falta:
+- **Governador adaptativo de overhead** — mira um teto rígido (ex.: <3%) e baixa sozinho para call-only
+  quando o código gravado vira loop quente. Overhead vira um **SLO**, não uma aposta.
+- **Daemon always-on + flush só no crash** — ring em memória compartilhada; num SIGKILL/OOM um processo
+  supervisor externo ainda escreve a caixa-preta. Um black box que **sobrevive à morte do avião**.
+- **Correlação distribuída** (OpenTelemetry / `traceparent`) — o `.flight` do serviço A referencia o do
+  serviço B. Crash cross-service navegável.
+
+**Fase 9 — O laço viral e o ecossistema.** O VISION aposta no arquivo compartilhável; falta remover todo o
+atrito:
+- **Viewer no browser** compilando o `flight-reader` (Rust) para **WASM**. Arrasta o `.flight`, vê a
+  experiência da TUI sem instalar nada. Esse é o loop de crescimento.
+- **Plugin pytest** — em falha de teste anexa o `.flight` automaticamente; `pytest --flight` regrava as
+  falhas com captura total.
+- **GitHub Action** — comenta causa-raiz + repro num CI vermelho.
+- **Middleware** Django/FastAPI/Flask — um `.flight` por erro 500 com o contexto da request.
+- **Recorders cross-language** escrevendo o mesmo formato `.flight` (Node, Go), porque o formato é
+  agnóstico de linguagem → grafo de objetos cross-language.
+- **Segurança que vira feature:** criptografia opcional em repouso (o arquivo tem valores mesmo pós-scrub),
+  para mandar um crash a um fornecedor sem vazar nada.
+
+**Fase 10 — Moonshot: What-if debugging.** Já que reconstruímos estado em qualquer `seq`, permitir **editar
+um valor no passado e re-executar dali para a frente** sobre a fita determinística: "e se `numbers` não
+estivesse vazio aqui?" — o programa segue e você vê o resultado **contrafactual**. É o santo graal do
+time-travel, e a arquitetura (event sourcing + tape) é uma das poucas que o torna factível.
 
 ---
 

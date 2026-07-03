@@ -215,6 +215,37 @@ Honest scope (rung 3): replay is guaranteed for single-thread / single-asyncio-l
 sockets and subprocess are recognized but staged (their state is larger). The clock / randomness / uuid
 class — flaky tests, time bombs, "fails 1% of the time" — is covered.
 
+## Roadmap ahead — Phases 4–10
+
+The compass: **fidelity → experience → intelligence → reach**. Every phase keeps the five inviolables
+(P1–P5) and stays useful on its own (P4). Full contracts live in [VISION.md](VISION.md) §5.6.
+
+- **Phase 4 — Total replay fidelity (close rung 3).** Interpose the remaining boundaries — files, sockets,
+  subprocess — **and the scheduler**. The key trick: record the *order* of lock acquisition and task
+  resumption (threads and asyncio), not the scheduler's internals. A program is a deterministic function
+  of its inputs *and the order the world answered in* — record that order and multi-thread replay repeats
+  bit-for-bit. Deliverable: `flight.deterministic()` covering the **flaky concurrency crash**. Honest hard
+  part: large I/O bloats the file → a "record only what was read, hash the rest" mode.
+- **Phase 5 — A real reverse debugger.** We already have `state_at(seq)`; the missing piece is the
+  *experience*: **step-backward** and a "breakpoint in the past" ("stop when `running` passed 100"), with
+  the UI reconstructing locals at that instant. Combined with native bytecode instrumentation (TECHNICAL
+  §3.2) for **sub-line** granularity, exposed over **DAP** — VS Code and PyCharm for free.
+- **Phase 6 — Debugging by comparison.** `flight diff run_ok.flight run_fail.flight` points at the **first
+  diverging mutation/event**; plus **automatic delta debugging** (ddmin over the tape) shrinking a crash to
+  its minimal reproducer: "your bug needs only these 3 of the 500 recorded values."
+- **Phase 7 — The intelligence layer.** A `.flight` is the perfect structured context for an LLM.
+  `flight explain` (root cause + suggested patch), `flight repro --pytest` (a committable regression test),
+  semantic queries over the timeline, and Sentry-style dedup by **common frame + state**.
+- **Phase 8 — The production black box.** An **adaptive overhead governor** (overhead as an SLO, not a bet),
+  an **always-on daemon** that flushes on `SIGKILL`/OOM via an external supervisor (a black box that
+  survives the plane), and **distributed correlation** (OpenTelemetry `traceparent`) for cross-service crashes.
+- **Phase 9 — The viral loop & ecosystem.** A **browser viewer** (the Rust reader compiled to **WASM**), a
+  **pytest plugin**, a **GitHub Action**, web-framework middleware, **cross-language recorders** writing the
+  same `.flight`, and optional **at-rest encryption**.
+- **Phase 10 — Moonshot: what-if debugging.** Edit a value in the past and re-execute forward over the
+  deterministic tape: "what if `numbers` weren't empty here?" — the counterfactual result. Event sourcing +
+  tape make it feasible.
+
 ## Install & build
 
 Requires Python **3.12+** and a Rust toolchain.

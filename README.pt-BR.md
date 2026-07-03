@@ -86,6 +86,30 @@ divergiu. *Convergência:* um crash dentro de `deterministic()` grava frames **e
 e o `repro` tece a fita no script — **reproduzindo um crash flaky de tempo/aleatoriedade deterministicamente**.
 Degrau 3 (threads) é pesquisa: replay garantido só single-thread/asyncio; arquivos/sockets estagiados.
 
+## Roadmap adiante — Fases 4–10
+
+A bússola: **fidelidade → experiência → inteligência → alcance**. Toda fase mantém os cinco invioláveis
+(P1–P5) e é útil sozinha (P4). Contratos completos em [VISION.md](VISION.md) §5.6.
+
+- **Fase 4 — Fidelidade total de replay (fechar o degrau 3).** Interpor arquivos/sockets/subprocess **e o
+  escalonamento**: gravar a *ordem* de aquisição de locks e retomada de tasks (threads e asyncio), não os
+  dados internos. Grave a ordem em que o mundo respondeu e o replay multi-thread repete bit a bit.
+  Entregável: `flight.deterministic()` cobrindo o **crash flaky de concorrência**. Parte difícil honesta:
+  I/O grande infla o arquivo → modo "grava só o que foi lido, com hash do resto".
+- **Fase 5 — Depurador reverso de verdade.** **Step-backward** + "breakpoint no passado" sobre
+  `state_at(seq)`, com granularidade **sub-linha** via bytecode nativo (TECHNICAL §3.2), exposto por **DAP**
+  → VS Code e PyCharm de graça.
+- **Fase 6 — Debugging por comparação.** `flight diff a.flight b.flight` (primeira divergência) + **delta
+  debugging** (ddmin sobre a fita → repro mínimo).
+- **Fase 7 — Camada de inteligência.** `flight explain` (causa-raiz + patch por LLM), `flight repro --pytest`
+  (teste de regressão commitável), query semântica na timeline, dedup por frame+estado.
+- **Fase 8 — Caixa-preta de produção.** Governador adaptativo de overhead (SLO), daemon always-on + flush no
+  crash (sobrevive a SIGKILL/OOM), correlação distribuída (OpenTelemetry).
+- **Fase 9 — Laço viral e ecossistema.** Viewer no browser (reader Rust → WASM), plugin pytest, GitHub
+  Action, middleware Django/FastAPI/Flask, recorders cross-language, cripto em repouso.
+- **Fase 10 — Moonshot: what-if debugging.** Editar um valor no passado e re-executar dali sobre a fita
+  determinística — o resultado contrafactual.
+
 ## Instalar & compilar
 
 Requer Python **3.12+** e um toolchain Rust.
