@@ -69,14 +69,16 @@ Three bets underpin the project (see [VISION.md](VISION.md)):
 **It is** a scoped, post-mortem recorder with a first-class viewer, evolving toward time-travel
 debugging. **It is not** an APM, a live debugger (that's `pdb`), or a profiler.
 
-## Status — Phase 7 (the intelligence layer) ✅
+## Status — Phase 8 (the production black box) ✅
 
-Every phase through 7 is complete, end to end and fully tested: 0 (foundation), 1 (the full black box),
+Every phase through 8 is complete, end to end and fully tested: 0 (foundation), 1 (the full black box),
 1.5 (the TUI viewer), 2 (scoped time-travel), 3 (rungs 1–2 of re-execution), 4 (deterministic I/O +
 thread/asyncio scheduling — see [deterministic I/O](#deterministic-io--phase-4) below), 5 (the reverse
 debugger + DAP — see [reverse debugging](#reverse-debugging--phase-5) below), 6 (`flight diff` +
-delta debugging — see [debugging by comparison](#debugging-by-comparison--phase-6) below) and 7 (`explain`
-/ `repro --pytest` / semantic queries / dedup — see [the intelligence layer](#the-intelligence-layer--phase-7)).
+delta debugging — see [debugging by comparison](#debugging-by-comparison--phase-6) below), 7 (`explain`
+/ `repro --pytest` / semantic queries / dedup — see [the intelligence layer](#the-intelligence-layer--phase-7))
+and 8 (an overhead SLO governor, a black box that survives `kill -9`, and cross-service correlation — see
+[the production black box](#the-production-black-box--phase-8)).
 
 **The engine (Rust):**
 - **`flight-format`** — the versioned, append-only, truncation-tolerant `.flight` format: header,
@@ -388,6 +390,53 @@ frame's `(qualname, file, offset-in-function)` and the *kinds* of the crash-fram
 bug groups to one id (even when line numbers shift), and different bugs stay apart. Better than grouping by
 stack alone.
 
+### The production black box — Phase 8
+
+Three things stand between a recorder that works on your laptop and one you leave *on* in production: a
+predictable cost, surviving a death that runs no Python, and making sense across a fleet of services.
+
+**Overhead as an SLO, not a bet.** The per-event cost is fixed and honest (~65 ns), but a recorded hot loop
+can still multiply it into real latency. The governor makes overhead a target you set: it samples the
+recorder's throughput on a background thread, estimates the fraction of wall-clock it is costing, and dials
+the granularity down a rung when it breaches the ceiling — dropping line events first, then returns, never
+below "which functions ran and how it unwound" — then climbs back when things quiet down.
+
+```console
+$ python -m flight run --slo 0.03 service.py      # keep recording overhead under 3%
+```
+
+**A black box that survives the death of the plane.** An uncaught exception is easy — the excepthook writes
+the file. `SIGKILL`, the OOM killer and segfaults run *no* Python, so nothing in-process can react. Flight
+keeps a checkpoint of the ring on disk (written atomically every interval) and a **supervisor subprocess**
+that shares a pipe with its parent. A clean shutdown sends one byte and the supervisor discards the
+checkpoint; any death that *doesn't* send it closes the pipe, the supervisor gets EOF, and it promotes the
+last checkpoint into a `flight-killed-*.flight`. The recorder can die and you still get the black box.
+
+```console
+$ python -m flight run --daemon service.py        # survive kill -9 / OOM
+```
+
+**Cross-service crashes.** In a mesh, a crash in service B is half a story without the request in service A
+that caused it — the same problem distributed tracing already solves. Flight stamps the **W3C trace
+context** (`traceparent`, read from an OpenTelemetry span, the environment, or set explicitly) onto every
+black box, plus explicit links to upstream `.flight`s. `flight trace` then groups a directory by `trace_id`
+into the cross-service crash graph:
+
+```console
+$ python -m flight trace ./crashes
+trace 4bf92f3577b34da6a3ce929d0e0e4736  (2 services)
+    [gateway]  flight-gateway-…-.flight   — TimeoutError: upstream did not respond
+    [checkout] flight-checkout-…-.flight  — KeyError: 'cart_id'
+        ↳ links to flight-gateway-…-.flight [gateway]
+```
+
+All of Phase 8 is **pure Python** over the existing engine — correlation rides the NONDET tape, and the
+granularity is retuned live through `sys.monitoring`, so no format or Rust change was needed. Honest scope:
+the overhead estimate is a calibrated single-thread number (it over-counts on many cores, which is safe for
+an SLO); the checkpoint is periodic, so a hard kill can lose up to one interval of the most recent events;
+and it is a supervisor-over-a-checkpoint, not yet a shared-memory ring the supervisor reads live — that is
+the noted future refinement.
+
 ## Roadmap ahead — Phases 4–10
 
 The compass: **fidelity → experience → intelligence → reach**. Every phase keeps the five inviolables
@@ -413,9 +462,10 @@ The compass: **fidelity → experience → intelligence → reach**. Every phase
   LLM-ready prompt / optional model call), `flight repro --pytest` (a committable, self-verifying
   regression test), semantic timeline queries (`len(cache) > 100`), and `flight fingerprint` dedup by
   **frame + state**. See [the intelligence layer](#the-intelligence-layer--phase-7) above.
-- **Phase 8 — The production black box.** An **adaptive overhead governor** (overhead as an SLO, not a bet),
-  an **always-on daemon** that flushes on `SIGKILL`/OOM via an external supervisor (a black box that
-  survives the plane), and **distributed correlation** (OpenTelemetry `traceparent`) for cross-service crashes.
+- **Phase 8 — The production black box. ✅ Done.** An **adaptive overhead governor** (overhead as an SLO,
+  not a bet), an **always-on daemon** that flushes on `SIGKILL`/OOM via an external supervisor (a black box
+  that survives the plane), and **distributed correlation** (W3C `traceparent` / OpenTelemetry) for
+  cross-service crashes. See [the production black box](#the-production-black-box--phase-8) above.
 - **Phase 9 — The viral loop & ecosystem.** A **browser viewer** (the Rust reader compiled to **WASM**), a
   **pytest plugin**, a **GitHub Action**, web-framework middleware, **cross-language recorders** writing the
   same `.flight`, and optional **at-rest encryption**.
@@ -464,12 +514,24 @@ python -m flight diff run_ok.flight run_fail.flight          # first point two r
 python -m flight explain crash.flight                        # heuristic root cause (+ --llm / --prompt)
 python -m flight repro crash.flight --pytest -o test_bug.py  # a committable regression test
 python -m flight fingerprint crash.flight                    # dedup id (by frame + state)
+python -m flight run --slo 0.03 --daemon service.py          # overhead SLO + survive kill -9 / OOM
+python -m flight trace ./crashes                             # cross-service crash graph (by trace id)
+```
+
+For production (Phase 8): keep overhead under a ceiling, survive an uncatchable death, and correlate crashes
+across services.
+
+```python
+flight.install(overhead_slo=0.03, daemon=True)   # governor + crash-surviving supervisor
+flight.correlate(service="checkout")             # stamp the W3C trace context (env / OTel / explicit)
+flight.link(upstream_flight_path)                # reference the upstream service's black box
 ```
 
 Configuration (`flight.Config`): `ring_capacity`, `output_dir`, `dump_on_crash`, `record_lines`,
 `record_returns` (see below), the `deny_prefixes` / `force_include` policy that keeps stdlib and
-site-packages out of the recording, and the crash-capture budget (`capture_deadline_ms`,
-`capture_max_bytes`, `max_str`, `max_container`, `max_depth`, `repr_limit`, `scrub_patterns`).
+site-packages out of the recording, the crash-capture budget (`capture_deadline_ms`, `capture_max_bytes`,
+`max_str`, `max_container`, `max_depth`, `repr_limit`, `scrub_patterns`), and the production knobs
+(`overhead_slo`, `governor_interval`, `per_event_ns`, `daemon`, `daemon_interval`, `correlation`).
 
 Register an adapter for your own big types so they're summarized, not dumped:
 
@@ -526,7 +588,8 @@ floor: ~40 ns you cannot remove, ~25 ns of actual work (lock-free ring + lock-fr
 - **P1 — Primum non nocere.** The recorder never crashes the user's program. Every callback swallows
   its own errors; every Rust FFI entry point is `catch_unwind`-guarded. A partial `.flight` is fine; a
   crash caused by flight is not.
-- **P2 — Honest, bounded overhead.** Black-box mode targets <5% overhead.
+- **P2 — Honest, bounded overhead.** Black-box mode targets <5% overhead; with `overhead_slo` set the
+  Phase-8 governor actively defends a ceiling by retuning granularity (overhead as an SLO, not a bet).
 - **P3 — The `.flight` format is the spine.** Engine and viewer only speak through it; it's versioned
   from day one; new readers read old files, old readers skip unknown blocks.
 - **P4 — Every phase is useful on its own.**
@@ -567,6 +630,9 @@ python/flight/
   _ddmin.py        delta debugging (ddmin) → minimal reproducer (Phase 6)
   _explain.py      flight explain: heuristic root cause + LLM-ready prompt (Phase 7)
   _fingerprint.py  crash dedup fingerprint by frame + state (Phase 7)
+  _governor.py     adaptive overhead governor: overhead as an SLO (Phase 8)
+  _daemon.py       crash-surviving supervisor: flush a black box after SIGKILL/OOM (Phase 8)
+  _correlation.py  W3C trace context + cross-service crash graph (Phase 8)
   _read.py, _cli.py, _config.py
 tests/             Python tests (serializer, capture, reader, CLI)
 scripts/bench.py   overhead baseline

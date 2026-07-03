@@ -14,6 +14,7 @@ import sys
 import sysconfig
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Optional
 
 
 def _stdlib_and_site_prefixes() -> tuple[str, ...]:
@@ -90,6 +91,26 @@ class Config:
     deny_prefixes: tuple[str, ...] = field(default_factory=_stdlib_and_site_prefixes)
     #: Extra path substrings to always record even if under a denied prefix.
     force_include: tuple[str, ...] = ()
+
+    # -- Phase-8 production black box ---------------------------------------
+    #: Target recording overhead as a fraction (e.g. 0.03 = 3%). When set, an
+    #: adaptive governor samples throughput and dials granularity down/up to
+    #: keep overhead near this ceiling. ``None`` disables the governor (fixed
+    #: granularity, the historical behaviour).
+    overhead_slo: Optional[float] = None
+    #: Governor sampling period, seconds.
+    governor_interval: float = 0.5
+    #: Calibrated cost of one recorded event (ns) for the overhead estimate.
+    per_event_ns: float = 65.0
+    #: Run the always-on supervisor: periodically checkpoint the ring so a
+    #: black box survives an uncatchable death (SIGKILL/OOM/segfault).
+    daemon: bool = False
+    #: Checkpoint period for the supervisor, seconds.
+    daemon_interval: float = 1.0
+    #: Distributed-trace context (:class:`flight._correlation.TraceContext`)
+    #: stamped onto every black box written by this process. Set via
+    #: :func:`flight.correlate`. ``None`` = no correlation.
+    correlation: Any = None
 
     def is_interesting(self, filename: str) -> bool:
         """True if code from `filename` should be recorded."""

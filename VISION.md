@@ -93,7 +93,7 @@ vêm redigidos por default.
 | 5 | Depurador reverso de verdade | *Step-backward* + "breakpoint no passado" sobre `state_at(seq)`; exposição via **DAP** (VS Code / PyCharm); granularidade sub-linha via bytecode nativo | ✅ **concluída** (engine + DAP com `supportsStepBack`; sub-linha via bytecode = futuro) |
 | 6 | Debugging por comparação | `flight diff a.flight b.flight` (primeira divergência) + **delta debugging** (ddmin sobre a fita → repro mínimo) | ✅ **concluída** (`flight diff` + `flight.minimize` via ddmin) |
 | 7 | Camada de inteligência | `flight explain` (causa-raiz + patch por LLM), `flight repro --pytest`, query semântica na timeline, dedup por frame+estado | ✅ **concluída** (explain heurístico+prompt LLM, repro --pytest, `len(x)>N`, fingerprint) |
-| 8 | Caixa-preta de produção | Governador adaptativo de overhead (SLO), daemon always-on + flush no crash (sobrevive a SIGKILL/OOM), correlação distribuída (OpenTelemetry) | 🔜 planejada |
+| 8 | Caixa-preta de produção | Governador adaptativo de overhead (SLO), daemon always-on + flush no crash (sobrevive a SIGKILL/OOM), correlação distribuída (OpenTelemetry) | ✅ **concluída** (governador SLO retunando a granularidade ao vivo; supervisor que promove o último checkpoint após `kill -9`; correlação W3C `traceparent` + `flight trace`) |
 | 9 | Laço viral e ecossistema | Viewer no browser (reader Rust → WASM), plugin pytest, GitHub Action, middleware Django/FastAPI/Flask, recorders cross-language, cripto em repouso | 🔜 planejada |
 | 10 | Moonshots | *What-if debugging*: editar um valor no passado e re-executar dali sobre a fita determinística — resultado contrafactual | 🔜 planejada |
 
@@ -308,6 +308,31 @@ Falta:
   supervisor externo ainda escreve a caixa-preta. Um black box que **sobrevive à morte do avião**.
 - **Correlação distribuída** (OpenTelemetry / `traceparent`) — o `.flight` do serviço A referencia o do
   serviço B. Crash cross-service navegável.
+
+> **Entregue (Fase 8).** Pura em Python sobre o que já existia — nenhuma mudança no formato ou no Rust
+> (correlação viaja na fita NONDET; o dump ring-only ganha correlação usando `dump_nondet`; a granularidade
+> é retunada ao vivo com `sys.monitoring.set_events`). **Governador de overhead como SLO** (`_governor.py`):
+> um `OverheadLadder` puro (máquina de estados com histerese, testada com estimativas injetadas) escolhe uma
+> **granularidade** — `lines → returns → calls` — e um `Governor` amostra a vazão de eventos do recorder num
+> thread de fundo, estima a fração de wall-clock gasta gravando (`eventos × ~65ns ÷ intervalo`) e **desce um
+> degrau** quando o código gravado vira loop quente (largando LINE, depois RETURN, nunca abaixo de "quais
+> funções rodaram e como desenrolou"), **subindo** de volta quando esfria — sempre limitado à granularidade
+> que o usuário pediu. `flight.install(overhead_slo=0.03)` ou `flight run --slo 0.03`. **Supervisor que
+> sobrevive à morte do avião** (`_daemon.py`): um thread grava *checkpoints* do ring atomicamente (temp +
+> rename) a cada intervalo, e um **processo supervisor** compartilha um pipe com o pai — num desligamento
+> limpo o pai manda um byte e o supervisor descarta o checkpoint; numa **morte incatável** (`SIGKILL`, OOM,
+> segfault → nenhum Python roda) o SO fecha o pipe, o `read` do supervisor retorna EOF e ele **promove o
+> último checkpoint** a `flight-killed-*.flight`. `flight.start_daemon()` ou `flight run --daemon`. **Correlação
+> distribuída** (`_correlation.py`): `TraceContext` do W3C Trace Context (`traceparent`/`tracestate`), lido de
+> um header explícito, de um span **OpenTelemetry** ao vivo (dependência opcional) ou do ambiente
+> (`TRACEPARENT`/`OTEL_SERVICE_NAME`); `flight.correlate(...)` carimba o contexto em todo black box, e
+> `flight.link(other)` registra referências cross-service. `Flight.correlation()` lê de volta; `flight trace
+> <dir>` agrupa os `.flight` por `trace_id` → o **grafo de crash cross-service** (serviço, exceção-título e
+> links). **Escopo honesto:** o governador estima overhead por um custo-por-evento calibrado (single-thread;
+> superestima em muitos cores, o que é seguro para um SLO); o checkpoint é periódico, então até `intervalo`
+> dos últimos eventos pode se perder num kill duro; é um supervisor-sobre-checkpoint, não (ainda) um ring em
+> memória compartilhada lido ao vivo — esse é o refino futuro. Testes: `tests/test_production.py` (28,
+> incluindo `SIGKILL` num processo-filho real recuperando o black box).
 
 **Fase 9 — O laço viral e o ecossistema.** O VISION aposta no arquivo compartilhável; falta remover todo o
 atrito:

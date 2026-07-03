@@ -109,6 +109,16 @@ def _capture(exc_value, exc_tb, config: Config, path, nondet=None) -> Optional[P
 
     if path is None:
         path = config.crash_path(pid=os.getpid(), when_ms=int(time.time() * 1000))
+    # Phase-8: stamp the distributed-trace context onto the crash so it can be
+    # navigated across services. Correlation rides the NONDET tape alongside any
+    # deterministic-replay entries (both are read back by source name).
+    nondet_all = list(nondet or [])
+    ctx = getattr(config, "correlation", None)
+    if ctx is not None:
+        try:
+            nondet_all.extend(ctx.to_nondet())
+        except Exception:
+            pass
     _core.dump_crash(
         str(path),
         platform.python_version(),
@@ -120,7 +130,7 @@ def _capture(exc_value, exc_tb, config: Config, path, nondet=None) -> Optional[P
         exc_tuples,
         frame_tuples,
         objects,
-        list(nondet or []),
+        nondet_all,
     )
     return path
 

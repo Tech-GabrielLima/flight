@@ -122,6 +122,25 @@ semântica** de tamanho — `len(cache) > 100` — no motor de time-travel ("qua
 `flight fingerprint` (`_fingerprint.py`): hash estável por cadeia de exceções + `(qualname, arquivo,
 offset)` de cada frame + *kinds* dos locais — dedup estilo Sentry, mas por **frame + estado**.
 
+**Fase 8 — caixa-preta de produção (concluída).** Tudo Python puro sobre o motor existente (correlação
+viaja na fita NONDET; granularidade retunada ao vivo via `sys.monitoring`). **Governador de overhead como
+SLO** (`_governor.py`): um `OverheadLadder` puro com histerese escolhe uma granularidade (`lines → returns →
+calls`) e um `Governor` amostra a vazão de eventos num thread de fundo, estima a fração de wall-clock gasta
+gravando e **desce um degrau** quando o código gravado vira loop quente — largando LINE, depois RETURN,
+nunca abaixo de "quais funções rodaram e como desenrolou" — **subindo** de volta quando esfria.
+`flight.install(overhead_slo=0.03)` / `flight run --slo 0.03`. **Supervisor que sobrevive à morte do avião**
+(`_daemon.py`): um thread grava *checkpoints* atômicos do ring e um processo supervisor compartilha um pipe
+com o pai — desligamento limpo manda um byte e o checkpoint é descartado; numa **morte incatável**
+(`SIGKILL`/OOM/segfault, nenhum Python roda) o pipe fecha, o supervisor recebe EOF e **promove o último
+checkpoint** a `flight-killed-*.flight`. `flight.start_daemon()` / `flight run --daemon`. **Correlação
+distribuída** (`_correlation.py`): `TraceContext` do W3C Trace Context, lido de header explícito, de um span
+**OpenTelemetry** ao vivo (opcional) ou do ambiente; `flight.correlate(...)` carimba o contexto em todo
+black box, `flight.link(...)` referencia serviços upstream, e `flight trace <dir>` agrupa os `.flight` por
+`trace_id` → o **grafo de crash cross-service**. Escopo honesto: o overhead é estimado por custo-por-evento
+calibrado (single-thread; superestima em muitos cores, seguro para um SLO); o checkpoint é periódico (um
+kill duro pode perder até um intervalo dos últimos eventos); é supervisor-sobre-checkpoint, não ainda um
+ring em memória compartilhada lido ao vivo (refino futuro).
+
 ## Roadmap adiante — Fases 4–10
 
 A bússola: **fidelidade → experiência → inteligência → alcance**. Toda fase mantém os cinco invioláveis
@@ -139,8 +158,9 @@ A bússola: **fidelidade → experiência → inteligência → alcance**. Toda 
   debugging** (ddmin sobre a fita → repro mínimo).
 - **Fase 7 — Camada de inteligência.** `flight explain` (causa-raiz + patch por LLM), `flight repro --pytest`
   (teste de regressão commitável), query semântica na timeline, dedup por frame+estado.
-- **Fase 8 — Caixa-preta de produção.** Governador adaptativo de overhead (SLO), daemon always-on + flush no
-  crash (sobrevive a SIGKILL/OOM), correlação distribuída (OpenTelemetry).
+- **Fase 8 — Caixa-preta de produção (concluída).** Governador adaptativo de overhead (SLO), daemon
+  always-on + flush no crash (sobrevive a SIGKILL/OOM), correlação distribuída (W3C `traceparent` /
+  OpenTelemetry) com `flight trace`.
 - **Fase 9 — Laço viral e ecossistema.** Viewer no browser (reader Rust → WASM), plugin pytest, GitHub
   Action, middleware Django/FastAPI/Flask, recorders cross-language, cripto em repouso.
 - **Fase 10 — Moonshot: what-if debugging.** Editar um valor no passado e re-executar dali sobre a fita
@@ -172,7 +192,13 @@ Ou embrulhe um script sem editá-lo:
 ```console
 python -m flight run meu_script.py --seus --args
 python -m flight inspect crash.flight
+python -m flight run --slo 0.03 --daemon servico.py   # overhead como SLO + sobrevive a kill -9 / OOM
+python -m flight trace ./crashes                       # grafo de crash cross-service (por trace id)
 ```
+
+Em produção (Fase 8): `flight.install(overhead_slo=0.03, daemon=True)` liga o governador e o supervisor;
+`flight.correlate(service="checkout")` carimba o contexto de trace (ambiente / OTel / explícito) e
+`flight.link(caminho_flight_upstream)` referencia o black box do serviço anterior.
 
 ## Overhead — o retrato honesto
 

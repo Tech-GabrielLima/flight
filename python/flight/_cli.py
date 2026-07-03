@@ -17,7 +17,16 @@ from . import __version__, install, read
 
 def _cmd_run(args: argparse.Namespace) -> int:
     """Run a script with Flight recording installed, like `python script.py`."""
-    install(output_dir=Path(args.output_dir) if args.output_dir else Path.cwd())
+    install(
+        output_dir=Path(args.output_dir) if args.output_dir else Path.cwd(),
+        record_lines=args.lines,
+        overhead_slo=args.slo,
+        daemon=args.daemon,
+    )
+    if args.correlate:
+        from . import correlate
+
+        correlate(root=True)
 
     script = args.script
     # Make the script see a normal argv and a normal sys.path[0].
@@ -241,6 +250,42 @@ def _cmd_debug(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_trace(args: argparse.Namespace) -> int:
+    """Group `.flight` files by distributed-trace id → the cross-service crash
+    graph. Each service that handled the same request shares one trace id."""
+    from ._correlation import trace_graph
+
+    paths: list[Path] = []
+    for arg in args.paths:
+        p = Path(arg)
+        if p.is_dir():
+            paths.extend(sorted(p.glob("*.flight")))
+        else:
+            paths.append(p)
+    flights = []
+    for p in paths:
+        try:
+            flights.append(read(p))
+        except Exception:
+            continue
+    groups = trace_graph(flights)
+    if not groups:
+        print("no correlated .flight files found (none carry a trace context)")
+        return 1
+    for trace_id, nodes in sorted(groups.items()):
+        print(f"trace {trace_id}  ({len(nodes)} service{'s' if len(nodes) != 1 else ''})")
+        for node in nodes:
+            headline = ""
+            fl = read(node.path)
+            if fl.exceptions:
+                exc_type, message, _rel = fl.exceptions[0]
+                headline = f"  — {exc_type}: {_clip(message, 48)}"
+            print(f"    [{node.service}] {Path(node.path).name}{headline}")
+            for lnk in node.context.links:
+                print(f"        ↳ links to {lnk.render()}")
+    return 0
+
+
 def _cmd_view(args: argparse.Namespace) -> int:
     """Open the TUI viewer on a `.flight` file."""
     try:
@@ -270,6 +315,19 @@ def build_parser() -> argparse.ArgumentParser:
         "script_args", nargs=argparse.REMAINDER, help="arguments passed to the script"
     )
     run.add_argument("--output-dir", help="where to write the .flight on crash")
+    run.add_argument("--lines", action="store_true", help="record per-line events (finest, costliest)")
+    run.add_argument(
+        "--slo", type=float, metavar="FRAC",
+        help="adaptive overhead governor: keep recording overhead under FRAC (e.g. 0.03)",
+    )
+    run.add_argument(
+        "--daemon", action="store_true",
+        help="run the supervisor so a black box survives an uncatchable death (SIGKILL/OOM)",
+    )
+    run.add_argument(
+        "--correlate", action="store_true",
+        help="stamp a distributed-trace context (from $TRACEPARENT, else a fresh root)",
+    )
     run.set_defaults(func=_cmd_run)
 
     ins = sub.add_parser("inspect", help="print a summary of a .flight file")
@@ -328,6 +386,12 @@ def build_parser() -> argparse.ArgumentParser:
     dbg.add_argument("--list", action="store_true", help="list the timeline steps and exit")
     dbg.add_argument("--limit", type=int, default=50, help="max steps to list (default 50)")
     dbg.set_defaults(func=_cmd_debug)
+
+    tr = sub.add_parser(
+        "trace", help="group .flight files by trace id → the cross-service crash graph"
+    )
+    tr.add_argument("paths", nargs="+", help="`.flight` files or directories to scan")
+    tr.set_defaults(func=_cmd_trace)
 
     return p
 

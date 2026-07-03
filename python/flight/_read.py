@@ -185,6 +185,23 @@ class Flight:
         line)`, chronological — the execution path before the end."""
         return [tuple(e) for e in _core.read_events(str(self.path), limit)]
 
+    def correlation(self):
+        """The distributed-trace context stamped on this black box (Phase 8),
+        or ``None`` if it carries none. See :func:`flight.correlate`."""
+        from ._correlation import TraceContext
+
+        try:
+            rows = _core.read_nondet(str(self.path))
+        except Exception:
+            return None
+        return TraceContext.from_nondet([(r[0], r[1], r[2], r[3]) for r in rows])
+
+    @property
+    def trace_id(self):
+        """The trace id this black box belongs to, or ``None``."""
+        ctx = self.correlation()
+        return ctx.trace_id if ctx is not None else None
+
     def recording(self) -> Recording:
         """Load the MUTATION timeline (Phase-2 scope recording)."""
         rows = _core.read_mutations(str(self.path))

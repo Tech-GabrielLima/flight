@@ -53,6 +53,47 @@ class _Session:
         # Phase-2 scope recording: a stack of active scopes per owning thread.
         self._scopes: dict[int, list] = {}
         self._scope_tool_on = False
+        # Phase-8: adaptive governor + crash-surviving daemon (created lazily).
+        self._governor = None
+        self._daemon = None
+        #: The user's requested granularity — the ceiling the governor restores
+        #: to. Computed at install time from record_lines/record_returns.
+        self.baseline_level = self._baseline_level()
+
+    # -- ring granularity (Phase-8 governor retunes this live) --------------
+
+    def _baseline_level(self) -> int:
+        from ._governor import LEVEL_CALLS, LEVEL_LINES, LEVEL_RETURNS
+
+        if self.config.record_lines:
+            return LEVEL_LINES
+        if self.config.record_returns:
+            return LEVEL_RETURNS
+        return LEVEL_CALLS
+
+    def _events_for_level(self, level: int) -> int:
+        """The `sys.monitoring` event mask for a granularity `level`, capped by
+        the user's requested granularity (never records more than asked)."""
+        from ._governor import LEVEL_LINES, LEVEL_RETURNS
+
+        ev = _mon.events
+        mask = ev.PY_START | ev.RAISE | ev.RERAISE | ev.PY_UNWIND
+        if level >= LEVEL_RETURNS and self.config.record_returns:
+            mask |= ev.PY_RETURN
+        if level >= LEVEL_LINES and self.config.record_lines:
+            mask |= ev.LINE
+        return mask
+
+    def set_ring_level(self, level: int) -> None:
+        """Retune the always-on ring to a granularity `level` at runtime. Called
+        by the overhead governor; safe to call any time after install."""
+        if not self._installed:
+            return
+        level = max(0, min(level, self.baseline_level))
+        try:
+            _mon.set_events(TOOL_RING, self._events_for_level(level))
+        except Exception:
+            pass
 
     def _wanted(self, filename: str) -> bool:
         cached = self._interesting.get(filename)
@@ -163,12 +204,8 @@ class _Session:
         _mon.register_callback(TOOL_RING, ev.LINE, _core.cb_line)
         # PY_START + the exception events are always on (the call path and how it
         # unwound). PY_RETURN and LINE are opt-outs/opt-ins for event volume.
-        events = ev.PY_START | ev.RAISE | ev.RERAISE | ev.PY_UNWIND
-        if self.config.record_returns:
-            events |= ev.PY_RETURN
-        if self.config.record_lines:
-            events |= ev.LINE
-        _mon.set_events(TOOL_RING, events)
+        # The governor may dial this down/up later; start at the baseline.
+        _mon.set_events(TOOL_RING, self._events_for_level(self.baseline_level))
         self._installed = True
 
         import threading
@@ -178,6 +215,40 @@ class _Session:
         threading.excepthook = self._threading_excepthook
         self._prev_unraisable_hook = sys.unraisablehook
         sys.unraisablehook = self._unraisable_hook
+
+        # Phase-8: bring up the production machinery the config asked for.
+        if self.config.overhead_slo is not None:
+            self.start_governor()
+        if self.config.daemon:
+            self.start_daemon()
+
+    # -- Phase-8 lifecycle --------------------------------------------------
+
+    def start_governor(self):
+        from ._governor import Governor
+
+        if self._governor is not None:
+            return self._governor
+        ceiling = self.config.overhead_slo if self.config.overhead_slo is not None else 0.03
+        gov = Governor(
+            baseline=self.baseline_level,
+            ceiling=ceiling,
+            interval=self.config.governor_interval,
+            per_event_ns=self.config.per_event_ns,
+            apply=self.set_ring_level,
+        )
+        gov.start()
+        self._governor = gov
+        return gov
+
+    def start_daemon(self):
+        from ._daemon import Daemon
+
+        if self._daemon is not None:
+            return self._daemon
+        d = Daemon(self.config, interval=self.config.daemon_interval).start()
+        self._daemon = d
+        return d
 
     # -- Phase-2 scope stack (tool 3) ---------------------------------------
 
@@ -226,6 +297,18 @@ class _Session:
     def uninstall(self):
         if not self._installed:
             return
+        if self._governor is not None:
+            try:
+                self._governor.stop()
+            except Exception:
+                pass
+            self._governor = None
+        if self._daemon is not None:
+            try:
+                self._daemon.stop(clean=True)
+            except Exception:
+                pass
+            self._daemon = None
         self._disable_scope_tool()
         try:
             _mon.set_events(TOOL_RING, 0)
@@ -289,24 +372,133 @@ def dump(path=None, *, config: Optional[Config] = None):
     into a crashing program). If `path` is omitted a timestamped name in the
     session's output directory is used.
     """
-    import platform
-
     cfg = config or (_active.config if _active is not None else Config())
     when_ms = int(time.time() * 1000)
     if path is None:
         path = cfg.crash_path(pid=_pid(), when_ms=when_ms)
+    return path if _write_ring_dump(path, cfg) else None
+
+
+def _write_ring_dump(path, cfg: Config) -> bool:
+    """Write a ring-only `.flight`, embedding the trace context if one is set.
+
+    Correlation rides on the NONDET tape, so a plain ring dump uses `_core.dump`
+    while a correlated one uses `_core.dump_nondet` (which lays down the same
+    META + EVENT_RING plus the NONDET block). Returns True on success."""
+    import platform
+
+    meta = (
+        platform.python_version(),
+        platform.platform(),
+        list(sys.argv),
+        _cwd(),
+        _version(),
+    )
+    entries = _correlation_entries(cfg)
     try:
-        _core.dump(
-            str(path),
-            platform.python_version(),
-            platform.platform(),
-            list(sys.argv),
-            _cwd(),
-            _version(),
-        )
-        return path
+        if entries:
+            _core.dump_nondet(str(path), *meta, entries, [])
+        else:
+            _core.dump(str(path), *meta)
+        return True
     except Exception:
+        return False
+
+
+def _correlation_entries(cfg: Config):
+    """NONDET entries encoding the config's trace context, or ``[]``."""
+    ctx = getattr(cfg, "correlation", None)
+    if ctx is None:
+        return []
+    try:
+        return list(ctx.to_nondet())
+    except Exception:
+        return []
+
+
+def _set_ring_level(level: int) -> None:
+    """Retune the active session's ring granularity (governor callback)."""
+    if _active is not None:
+        _active.set_ring_level(level)
+
+
+def start_daemon(**overrides):
+    """Start the crash-surviving supervisor for the active session (Phase 8).
+
+    Returns the :class:`~flight._daemon.Daemon`, or ``None`` if Flight is not
+    installed. Idempotent — starting twice returns the running daemon."""
+    if _active is None:
         return None
+    for k, v in overrides.items():
+        setattr(_active.config, k, v)
+    return _active.start_daemon()
+
+
+def start_governor(**overrides):
+    """Start the adaptive overhead governor for the active session (Phase 8).
+
+    Pass ``overhead_slo=0.03`` (or set it on the Config) to choose the ceiling.
+    Returns the :class:`~flight._governor.Governor`, or ``None`` if Flight is
+    not installed."""
+    if _active is None:
+        return None
+    for k, v in overrides.items():
+        setattr(_active.config, k, v)
+    if _active.config.overhead_slo is None:
+        _active.config.overhead_slo = 0.03
+    return _active.start_governor()
+
+
+def correlate(
+    traceparent=None,
+    *,
+    service=None,
+    trace_state="",
+    from_env=True,
+    from_otel=False,
+    root=False,
+):
+    """Stamp a distributed-trace context on every black box this process writes.
+
+    Resolves the context from (in order) an explicit ``traceparent``, a live
+    OpenTelemetry span (``from_otel``), or the environment (``from_env``); with
+    ``root=True`` it mints a fresh root when nothing is found. Returns the
+    :class:`~flight._correlation.TraceContext`, or ``None`` if unresolved."""
+    from ._correlation import TraceContext, resolve
+
+    ctx = resolve(
+        traceparent=traceparent,
+        service=service,
+        trace_state=trace_state,
+        from_env=from_env,
+        from_otel=from_otel,
+    )
+    if ctx is None and root:
+        ctx = TraceContext.new_root(service=service)
+    cfg = _active.config if _active is not None else None
+    if cfg is not None:
+        cfg.correlation = ctx
+    return ctx
+
+
+def link(ref, *, service=None, trace_id=None):
+    """Record a link from this process's black boxes to another `.flight`.
+
+    ``ref`` is a `.flight` path (or a Flight/summary with a ``.path``). The link
+    is added to the current trace context (a root is minted if none is set), so
+    the referenced black box shows up in the cross-service crash graph."""
+    from ._correlation import Link, TraceContext
+
+    cfg = _active.config if _active is not None else None
+    if cfg is None:
+        return None
+    ctx = getattr(cfg, "correlation", None)
+    if ctx is None:
+        ctx = TraceContext.new_root(service=service)
+    ref_path = getattr(ref, "path", ref)
+    tid = trace_id if trace_id is not None else ctx.trace_id
+    cfg.correlation = ctx.with_link(Link(trace_id=tid, ref=str(ref_path), service=service))
+    return cfg.correlation
 
 
 def _pid() -> int:

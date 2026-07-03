@@ -28,11 +28,21 @@ from __future__ import annotations
 
 from ._adapters import Adapted, adapter
 from ._config import Config
+from ._correlation import Link, TraceContext, trace_graph
 from ._ddmin import MinimizeResult, minimize
 from ._diff import Divergence, diff_files as diff
 from ._explain import Explanation, explain
 from ._fingerprint import fingerprint
-from ._install import dump, install, is_installed, uninstall
+from ._install import (
+    correlate,
+    dump,
+    install,
+    is_installed,
+    link,
+    start_daemon,
+    start_governor,
+    uninstall,
+)
 from ._nondet import ReplayDivergence, Tape, deterministic, replay, replay_tape
 from ._read import Crash, Flight, Frame, Mutation, Recording, read
 from ._record import record, watch
@@ -48,6 +58,7 @@ __all__ = [
     "Explanation",
     "Flight",
     "Frame",
+    "Link",
     "MinimizeResult",
     "Mutation",
     "Recording",
@@ -55,9 +66,11 @@ __all__ = [
     "Step",
     "Tape",
     "TimeTravel",
+    "TraceContext",
     "__version__",
     "adapter",
     "capture",
+    "correlate",
     "deterministic",
     "diff",
     "dump",
@@ -65,14 +78,18 @@ __all__ = [
     "fingerprint",
     "install",
     "is_installed",
+    "link",
     "minimize",
     "read",
     "record",
     "replay",
     "replay_tape",
     "repro",
+    "start_daemon",
+    "start_governor",
     "stats",
     "time_travel",
+    "trace_graph",
     "uninstall",
     "watch",
 ]

@@ -257,12 +257,27 @@ Fase 7   ✅ inteligência. flight explain (_explain.py): resumo heurístico off
             commitável (pytest.raises) + auto-verifica via __main__. Query semântica len(x) op N no
             _timetravel (nº de chaves distintas ao longo da timeline). fingerprint (_fingerprint.py): hash
             estável de exceções + (qualname,basename,offset) por frame + kinds dos locais = dedup Sentry.
+Fase 8   ✅ produção. TUDO Python puro (correlação na fita NONDET; dump ring-only ganha correlação via
+            dump_nondet; granularidade retunada ao vivo com sys.monitoring.set_events). Governador SLO
+            (_governor.py): OverheadLadder puro (histerese, lines→returns→calls) + Governor amostra a vazão
+            de eventos num thread de fundo, estima overhead = eventos×per_event_ns÷intervalo, desce quando
+            vira loop quente (nunca abaixo de calls), sobe ao esfriar (limitado ao baseline pedido);
+            install(overhead_slo=) / run --slo. Supervisor (_daemon.py): thread grava checkpoints atômicos
+            (temp+rename) do ring; processo supervisor compartilha um pipe — shutdown limpo manda 1 byte e
+            descarta o checkpoint, morte incatável (SIGKILL/OOM/segfault) fecha o pipe → EOF → promove o
+            último checkpoint a flight-killed-*.flight; start_daemon() / run --daemon. Correlação
+            (_correlation.py): TraceContext W3C (traceparent/tracestate), lido de header/OTel-ao-vivo/env;
+            correlate() carimba, link() referencia upstream, Flight.correlation() lê de volta, trace_graph/
+            `flight trace` agrupa por trace_id → grafo cross-service. Honesto: overhead single-thread
+            (superestima em N cores = seguro p/ SLO); checkpoint periódico (kill duro perde ≤1 intervalo);
+            supervisor-sobre-checkpoint, não ring em shm lido ao vivo (futuro). Testes: test_production.py
+            (28, incl. SIGKILL num filho real recuperando o black box).
 Fase 5   🔜 depurador reverso: step-backward + breakpoint no passado sobre state_at(seq);
             bytecode nativo (§3.2) p/ sub-linha; exposição via DAP (VS Code/PyCharm).
 Fase 6   🔜 flight diff (primeira divergência) + delta debugging (ddmin sobre a fita).
 Fase 7   🔜 inteligência: flight explain (LLM), repro --pytest, query semântica, dedup frame+estado.
-Fase 8   🔜 produção: governador de overhead (SLO), daemon + flush no crash (sobrevive SIGKILL/OOM),
-            correlação distribuída (OpenTelemetry).
+Fase 8   ✅ produção (ver bloco acima): governador de overhead (SLO), supervisor + flush no crash
+            (sobrevive SIGKILL/OOM), correlação distribuída (W3C traceparent / OpenTelemetry) + flight trace.
 Fase 9   🔜 ecossistema: viewer WASM no browser, plugin pytest, GitHub Action, middleware web,
             recorders cross-language, cripto em repouso.
 Fase 10  🔜 moonshot: what-if debugging (editar valor no passado e re-executar dali sobre a fita).
