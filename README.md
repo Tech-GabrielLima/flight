@@ -697,37 +697,47 @@ floor: ~40 ns you cannot remove, ~25 ns of actual work (lock-free ring + lock-fr
 
 ## Tests
 
-The suite is exhaustive: **1988 Python tests** (+17 skipped only when an optional
-dependency — `cryptography`, `numpy`, `pandas` — is absent) and **377 Rust tests**, all green.
+**2005 Python tests** (1988 pass; 17 skip only when an optional dependency — `cryptography`, `numpy`,
+`pandas` — or a toolchain — `go`, `node`, the WASM build, Python 3.13 — is absent) and **377 Rust tests**,
+all green.
 
 ```console
 cargo test                 # Rust — 377 tests across the three crates
-pytest                     # Python — 1988 tests across every module
+pytest                     # Python — 2005 tests across every module
 python scripts/bench.py    # steady-state overhead baseline
 ```
 
-Every module is covered by a dedicated file, heavily parametrized so each behaviour is checked across
-its real input space rather than one happy path:
+Every module has a dedicated file, heavily parametrized so each behaviour is checked across its real input
+space rather than one happy path. The bulk (25 files):
 
-- **Rust.** `flight-format` round-trips every block/event/enum through msgpack over a wide value range
-  (empty, unicode, `u64::MAX`, negative `i64`, …), asserts the writer's **exact byte layout** (header,
-  block framing, footer index, trailer), and round-trips `compress`/`decompress` from empty to >1 MiB.
-  `flight-reader`'s marquee test **truncates a valid file at every byte offset** and asserts it never
-  panics — it degrades to `partial` or errors cleanly — plus unknown-block tolerance, corrupt-payload
-  survival, and index-vs-linear-scan fallback. `flight-core` covers the ring buffer (wraparound,
-  multi-thread merge), the recorder, and every `dump_*` path read back through the reader.
-- **Python.** Each of the 30-plus modules has a `test_*_ext.py` suite asserting real behaviour and edge
-  cases: the object-graph serializer (cycles, aliasing, every budget/limit boundary, hostile `__repr__`),
-  crash capture across exception kinds and chains, deterministic replay of all 20 non-deterministic
-  boundaries (bit-for-bit) plus I/O / asyncio / thread-order, the reverse-debugger engine and DAP
-  protocol, `diff`/`ddmin`/`explain`/`fingerprint`/`repro`, the Phase-8 governor state machine / crash
-  daemon / W3C correlation, the pytest plugin / WSGI+ASGI middleware / `flight ci` / at-rest crypto, and
-  Phase-10 what-if across all its outcome kinds. Cross-language and WASM interop are driven end to end
-  (`go run`, `node`, the reader running in a JS runtime) and skip cleanly where the toolchain is absent.
+| Area | Tests | What it exercises |
+|---|--:|---|
+| foundation (config / scrub / serialize / adapters) | 296 | object graph — cycles, aliasing, every budget/limit boundary, hostile `__repr__`; the deny/scrub policy |
+| capture / read / install / cli / robustness | 354 | crash capture across exception kinds & chains; the reader accessors; install lifecycle; the CLI |
+| record / timetravel / dap | 295 | scope mutation capture; the reverse-debugger cursor & query engine; the full DAP protocol |
+| nondet / io / asyncio / threads | 293 | bit-for-bit replay of all 20 non-deterministic boundaries; file/pipe/subprocess/socket I/O; lock-order enforcement |
+| diff / ddmin / explain / fingerprint / repro | 268 | first-divergence diff; ddmin minimality; heuristic root cause; fingerprint stability; verified repro |
+| correlation / governor / daemon / crypto | 249 | W3C trace context; the overhead SLO state machine; the crash-surviving supervisor; AES-GCM at rest |
+| pytest plugin / web / ci / whatif / viewer | 246 | `pytest --flight`; WSGI+ASGI 500s; the CI comment; what-if's outcome kinds; the rendering-free viewer model |
+| polyglot interop (Go / Node / WASM) | 4 | Go & Node recorders and the WASM reader driven end to end (`go run`, `node`, a JS runtime) |
 
-Where a test surfaced a genuine gap it was fixed at the source (e.g. the scrubber docstring was corrected
-to describe its intentional over-redaction); design limitations that are working-as-intended are pinned by
-tests that assert the real behaviour, so the suite is a faithful description of what the code does.
+The marquee Rust test **truncates a valid `.flight` at every byte offset** and asserts the reader never
+panics — it degrades to `partial` or errors cleanly.
+
+**Coverage — honest.** No, it is not 100%. Measured with `coverage.py`, in-process statement coverage is
+**88%** (`coverage run --source=flight -m pytest && coverage report`), with most modules at 90–100% (reader,
+timetravel, diff, serialize, dap all ≥98%). The gap is deliberate and understood, not untested logic:
+
+- code that only runs in a **child process** isn't counted by an in-process run — `python -m flight run`
+  (subprocess), the **pytest plugin** hooks (run inside a spawned pytest), the **daemon supervisor**, and
+  the **Go/Node/WASM** recorders. These are covered *end to end* by subprocess tests; they just don't
+  register on the parent's line counter (so 88% understates what's exercised);
+- **optional-dependency** paths that skip here — the AES-GCM branch of `_crypto` needs `cryptography`;
+- **defensive `except: … pass`** guards (P1) that only fire on failures hard to provoke on purpose.
+
+Where a test surfaced a genuine gap it was fixed at the source (the scrubber docstring was corrected to
+describe its intentional over-redaction). Design limitations that are working-as-intended are pinned by
+tests asserting the real behaviour, so the suite is a faithful description of what the code does.
 
 ## Layout
 
