@@ -697,11 +697,37 @@ floor: ~40 ns you cannot remove, ~25 ns of actual work (lock-free ring + lock-fr
 
 ## Tests
 
+The suite is exhaustive: **1988 Python tests** (+17 skipped only when an optional
+dependency — `cryptography`, `numpy`, `pandas` — is absent) and **377 Rust tests**, all green.
+
 ```console
-cargo test                 # Rust: format round-trips, truncation at every byte, ring, recorder
-pytest                     # Python: monitoring wiring, crash capture, CLI, round-trip
+cargo test                 # Rust — 377 tests across the three crates
+pytest                     # Python — 1988 tests across every module
 python scripts/bench.py    # steady-state overhead baseline
 ```
+
+Every module is covered by a dedicated file, heavily parametrized so each behaviour is checked across
+its real input space rather than one happy path:
+
+- **Rust.** `flight-format` round-trips every block/event/enum through msgpack over a wide value range
+  (empty, unicode, `u64::MAX`, negative `i64`, …), asserts the writer's **exact byte layout** (header,
+  block framing, footer index, trailer), and round-trips `compress`/`decompress` from empty to >1 MiB.
+  `flight-reader`'s marquee test **truncates a valid file at every byte offset** and asserts it never
+  panics — it degrades to `partial` or errors cleanly — plus unknown-block tolerance, corrupt-payload
+  survival, and index-vs-linear-scan fallback. `flight-core` covers the ring buffer (wraparound,
+  multi-thread merge), the recorder, and every `dump_*` path read back through the reader.
+- **Python.** Each of the 30-plus modules has a `test_*_ext.py` suite asserting real behaviour and edge
+  cases: the object-graph serializer (cycles, aliasing, every budget/limit boundary, hostile `__repr__`),
+  crash capture across exception kinds and chains, deterministic replay of all 20 non-deterministic
+  boundaries (bit-for-bit) plus I/O / asyncio / thread-order, the reverse-debugger engine and DAP
+  protocol, `diff`/`ddmin`/`explain`/`fingerprint`/`repro`, the Phase-8 governor state machine / crash
+  daemon / W3C correlation, the pytest plugin / WSGI+ASGI middleware / `flight ci` / at-rest crypto, and
+  Phase-10 what-if across all its outcome kinds. Cross-language and WASM interop are driven end to end
+  (`go run`, `node`, the reader running in a JS runtime) and skip cleanly where the toolchain is absent.
+
+Where a test surfaced a genuine gap it was fixed at the source (e.g. the scrubber docstring was corrected
+to describe its intentional over-redaction); design limitations that are working-as-intended are pinned by
+tests that assert the real behaviour, so the suite is a faithful description of what the code does.
 
 ## Layout
 

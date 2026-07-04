@@ -40,8 +40,10 @@ class Scrubber:
     """Decides whether a given name's value must be redacted."""
 
     def __init__(self, patterns: Iterable[str] = DEFAULT_PATTERNS):
-        # One compiled alternation; word-ish boundaries so "author" doesn't
-        # trip "auth" but "auth_token" and "userAuth" do.
+        # One compiled case-insensitive alternation, matched as a plain substring
+        # (no word boundaries): "auth_token" and "userAuth" redact — and so does
+        # "author". That over-redaction is deliberate (P5): a false positive
+        # costs a hidden value, a false negative leaks a real one.
         parts = [re.escape(p) for p in patterns]
         self._rx = re.compile("|".join(parts), re.IGNORECASE) if parts else None
 
