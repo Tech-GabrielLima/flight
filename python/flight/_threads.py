@@ -94,7 +94,10 @@ class _ThreadBase:
             real = orig(*args, **kwargs)
             try:
                 caller = sys._getframe(1).f_globals.get("__name__", "")
-            except Exception:
+            except Exception:  # pragma: no cover - defensive: a lock factory is
+                # always called from a live Python frame with an f_globals dict,
+                # so this guard (which keeps lock creation from ever crashing the
+                # user's program, P1) is not reachable deterministically.
                 caller = ""
             if caller.split(".", 1)[0] in _INTERNAL_LOCK_MODULES:
                 return real  # runtime machinery — leave it fully intact

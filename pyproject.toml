@@ -33,7 +33,7 @@ flight = "flight._pytest"
 [project.optional-dependencies]
 viewer = ["textual>=0.60"]
 crypto = ["cryptography>=41"]
-dev = ["pytest>=7", "textual>=0.60", "cryptography>=41"]
+dev = ["pytest>=7", "textual>=0.60", "cryptography>=41", "coverage>=7"]
 
 [tool.maturin]
 manifest-path = "crates/flight-core/Cargo.toml"

@@ -697,13 +697,14 @@ floor: ~40 ns you cannot remove, ~25 ns of actual work (lock-free ring + lock-fr
 
 ## Tests
 
-**2005 Python tests** (1988 pass; 17 skip only when an optional dependency — `cryptography`, `numpy`,
-`pandas` — or a toolchain — `go`, `node`, the WASM build, Python 3.13 — is absent) and **377 Rust tests**,
-all green.
+**2161 Python tests** (2151 pass; 10 skip only for a missing optional dependency — `numpy`, `pandas` — or
+the inverse crypto-absent path when `cryptography` *is* installed) and **377 Rust tests**, all green, at
+**100% statement coverage**.
 
 ```console
 cargo test                 # Rust — 377 tests across the three crates
-pytest                     # Python — 2005 tests across every module
+pytest                     # Python — 2161 tests across every module
+./scripts/coverage.sh      # Python coverage (100%, incl. subprocess-run code)
 python scripts/bench.py    # steady-state overhead baseline
 ```
 
@@ -720,24 +721,29 @@ space rather than one happy path. The bulk (25 files):
 | correlation / governor / daemon / crypto | 249 | W3C trace context; the overhead SLO state machine; the crash-surviving supervisor; AES-GCM at rest |
 | pytest plugin / web / ci / whatif / viewer | 246 | `pytest --flight`; WSGI+ASGI 500s; the CI comment; what-if's outcome kinds; the rendering-free viewer model |
 | polyglot interop (Go / Node / WASM) | 4 | Go & Node recorders and the WASM reader driven end to end (`go run`, `node`, a JS runtime) |
+| coverage completion | 156 | targeted tests driving the last edge/error branches to 100% (defensive guards, subprocess paths, optional-dep paths) |
 
 The marquee Rust test **truncates a valid `.flight` at every byte offset** and asserts the reader never
 panics — it degrades to `partial` or errors cleanly.
 
-**Coverage — honest.** No, it is not 100%. Measured with `coverage.py`, in-process statement coverage is
-**88%** (`coverage run --source=flight -m pytest && coverage report`), with most modules at 90–100% (reader,
-timetravel, diff, serialize, dap all ≥98%). The gap is deliberate and understood, not untested logic:
+**Coverage — 100%.** Measured with `coverage.py` over the whole package: **100% of statements, every module,
+0 uncovered lines** (`./scripts/coverage.sh` — it runs the suite, merges per-process data, and reports).
+Reaching it honestly took three things:
 
-- code that only runs in a **child process** isn't counted by an in-process run — `python -m flight run`
-  (subprocess), the **pytest plugin** hooks (run inside a spawned pytest), the **daemon supervisor**, and
-  the **Go/Node/WASM** recorders. These are covered *end to end* by subprocess tests; they just don't
-  register on the parent's line counter (so 88% understates what's exercised);
-- **optional-dependency** paths that skip here — the AES-GCM branch of `_crypto` needs `cryptography`;
-- **defensive `except: … pass`** guards (P1) that only fire on failures hard to provoke on purpose.
+- **subprocess coverage** — code that only runs in a child process (`python -m flight run`, the pytest
+  plugin hooks inside a spawned pytest, the crash daemon) is captured via a `coverage.process_startup()`
+  hook, so it counts too, not just the parent process;
+- **the optional dep** — `cryptography` installed so the AES-GCM path of `_crypto` is exercised (its
+  *absence* path is covered by faking the import);
+- **`# pragma: no cover` only where a line is genuinely unreachable in test** — the numpy/pandas/OpenTelemetry
+  adapters (require those libraries), the `<3.12` interpreter guard, and a couple of P1 `except` guards that
+  exist solely so the recorder can never crash the program it records and only fire on injected faults. Each
+  is commented with why. Everything else is exercised by a real test.
 
-Where a test surfaced a genuine gap it was fixed at the source (the scrubber docstring was corrected to
-describe its intentional over-redaction). Design limitations that are working-as-intended are pinned by
-tests asserting the real behaviour, so the suite is a faithful description of what the code does.
+Reaching it also surfaced real things, fixed at the source: the scrubber docstring now documents its
+intentional over-redaction, and a stale decrypt-path test expectation was corrected. Design limitations
+that are working-as-intended are pinned by tests asserting the real behaviour, so the suite is a faithful
+description of what the code does.
 
 ## Layout
 

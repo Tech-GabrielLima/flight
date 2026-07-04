@@ -1,0 +1,7 @@
+[run]
+source = flight
+parallel = true
+sigterm = true
+
+[report]
+show_missing = true

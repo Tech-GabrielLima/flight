@@ -903,6 +903,6 @@ def test_encrypt_then_decrypt_file(tmp_path):
     enc = _crypto.encrypt_file(src, "pw")
     assert enc == src.with_suffix(".flight.enc")
     assert _crypto.looks_encrypted(enc)
-    dec = _crypto.decrypt_file(enc, "pw")  # .enc stripped
-    assert dec == src.with_suffix("")  # in
+    dec = _crypto.decrypt_file(enc, "pw")  # only the .enc suffix is stripped
+    assert dec == src  # in.flight.enc → in.flight (the original name is recovered)
     assert dec.read_bytes() == b"FLGT-a-flight-body"

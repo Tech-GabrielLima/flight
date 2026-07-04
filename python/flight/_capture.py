@@ -83,8 +83,9 @@ def build_payload(exc_value, exc_tb, config: Config):
         # dict() takes an immediate shallow snapshot (PEP 667 proxy on 3.13+).
         try:
             local_items = list(dict(frame.f_locals).items())
-        except Exception:
-            local_items = []
+        except Exception:  # pragma: no cover - defensive P1 guard: a real CPython
+            local_items = []  # frame's f_locals proxy is always dict()-able; only a
+            #                   hostile fake frame could raise, which can't occur here.
         local_ids = [(str(name), graph.add_local(str(name), value)) for name, value in local_items]
         frame_tuples.append(
             (code.co_filename, code.co_qualname, int(lineno), int(code.co_firstlineno), local_ids)
