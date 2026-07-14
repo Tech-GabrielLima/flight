@@ -1,52 +1,84 @@
-# flight — a flight recorder for Python
+<div align="center">
 
-> **Languages:** **English** · [Português](README.pt-BR.md)
->
-> **Docs:** [Vision & product](VISION.md) · [Technical guide](TECHNICAL.md) · [The `.flight` format](docs/FORMAT.md)
+<h1>✈&nbsp;&nbsp;flight</h1>
 
-> When a Python program dies, you shouldn't get a traceback and *good luck* — you should get the
-> complete **black box** of the flight: every step the code took in its last moments, navigable,
-> shareable, and (eventually) replayable in time.
->
-> flight is a **post-mortem recorder** built the way you can actually leave it on: a lock-free ring
-> buffer and the `.flight` file writer live in **Rust** (via PyO3), fed by CPython's **`sys.monitoring`**
-> (PEP 669, 3.12+) so the steady-state overhead stays low. When an unhandled exception escapes, the
-> recording is flushed to a self-describing, truncation-tolerant `.flight` file you can inspect.
+<h3>When a Python program dies, get the <em>black box</em> — not just a traceback.</h3>
+
+<p>
+A post-mortem recorder you can actually leave on. A lock-free ring buffer and the <code>.flight</code>
+writer live in <b>Rust</b> (via PyO3), fed by CPython's <b><code>sys.monitoring</code></b> (PEP 669) so
+steady-state overhead stays low. When a crash escapes, it flushes a self-describing,
+truncation-tolerant <b>black box</b> you can open, share, and replay in time.
+</p>
+
+<p>
+<a href="https://pypi.org/project/pyflight/"><img alt="PyPI" src="https://img.shields.io/pypi/v/pyflight?logo=pypi&logoColor=white&label=pypi&color=3775A9"></a>
+<img alt="Python 3.12+" src="https://img.shields.io/pypi/pyversions/pyflight?logo=python&logoColor=white">
+<a href="https://github.com/Tech-GabrielLima/flight/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Tech-GabrielLima/flight/actions/workflows/ci.yml/badge.svg"></a>
+<img alt="Rust + Python" src="https://img.shields.io/badge/core-rust%20%2B%20python-000?logo=rust&logoColor=white">
+<img alt="MIT" src="https://img.shields.io/badge/license-MIT-3fb950">
+</p>
+
+<br>
+
+<img alt="flight inspect diagnosing a crash: the black box points straight at the empty list" width="720"
+     src="https://raw.githubusercontent.com/Tech-GabrielLima/flight/main/assets/demo.gif">
+
+<br><br>
+
+<pre><b>pip install pyflight</b></pre>
+
+<sub><a href="README.pt-BR.md">Português</a> · <a href="VISION.md">Vision</a> · <a href="TECHNICAL.md">Technical guide</a> · <a href="docs/FORMAT.md">The .flight format</a></sub>
+
+</div>
+
+---
+
+## The 60-second tour
+
+Leave it on; let a crash write its own report. No breakpoints, no "can you reproduce it?"
+
+```python
+import flight
+flight.install()          # cheap enough to leave on — see Overhead
+...                       # run your program
+# on an uncaught exception, a .flight is written automatically
+```
 
 ```console
-$ python examples/crash.py
-Traceback (most recent call last):
-  ...
+$ python -m flight run yourscript.py       # or just import flight; flight.install()
+...
 ZeroDivisionError: division by zero
-[flight] recorded flight-57275-1783002970970.flight
+[flight] recorded flight-57275.flight
 
-$ python -m flight inspect flight-57275-1783002970970.flight
-flight file : flight-57275-1783002970970.flight
-format      : v1  (complete, index)
-blocks      : META, EXCEPTION, FRAME, OBJECT, SOURCE, EVENT_RING
-exception   :
-    ZeroDivisionError: division by zero
+$ python -m flight inspect flight-57275.flight
+exception   : ZeroDivisionError: division by zero
 frames      : 4 (crash first)
   #0 compute_average  (crash.py:26)
         numbers = list[0] ↔          # empty! this is the bug
-        total = 0
   #1 summarize  (crash.py:32)
-        datasets = dict[3] ↔
-        results = list[2]
-        name = evening               # …and this names the culprit dataset
-        data = list[0] ↔             # the SAME empty list, aliased into compute_average
-        avg = 10.0
-  #2 main  (crash.py:43)
-        datasets = dict[3] ↔
-  #3 <module>  (crash.py:47)
-        ...
+        data = list[0] ↔             # the SAME empty list, aliased in
 ```
 
-The `↔` marks an object that is the *same* across frames: `data` (the empty `evening` dataset) is
-literally `numbers` inside `compute_average`. The black box diagnosed the bug — no reproduction
-needed. Every frame's locals, the full object graph, the exception chain and the source are in the
-file; `flight inspect --max-locals 40` shows more, and the Phase-1.5 TUI viewer will make it
-navigable.
+The `↔` marks an object that is the *same* across frames: `data` (the empty `evening` dataset) **is**
+`numbers` inside `compute_average`. The black box diagnosed the bug — the object graph, every frame's
+locals, the exception chain and the source are all in the file, and it never had to run twice.
+
+## What you can do with a `.flight`
+
+| Command | What it answers |
+|---|---|
+| `flight inspect` | the crash: frames, locals, object graph, aliasing (`↔`) |
+| `flight why --var x` | **why is this value what it is?** — a dynamic backward slice |
+| `flight diff a b` | the first point two runs diverged (`--html` for a shareable page) |
+| `flight bisect` | which commit introduced the bug (by fingerprint, or by replay) |
+| `flight generalize` | the boundary at which a recorded value flips the failure |
+| `flight fix` | propose **and verify** a patch by replaying it over the recorded tape |
+| `flight view --serve` | what-if in the browser: change a past value, see the new outcome |
+| `flight serve` | fleet mode: a dashboard aggregating thousands of black boxes |
+| `flight repro [--pytest]` | a self-verifying reproduction script / regression test |
+
+<sub>Recordings open with **no install** in a single offline HTML page — the Rust reader compiled to WebAssembly. Drop a `.flight` on it and read the crash in your browser.</sub>
 
 ---
 
