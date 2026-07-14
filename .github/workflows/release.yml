@@ -72,6 +72,11 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # Publish wheels only. The abi3 wheels cover every mainstream platform
+      # (Linux x86_64/aarch64, macOS universal2, Windows) on Python 3.12+, and
+      # this project's sdist filenames are burned on PyPI (uploaded+deleted once,
+      # which PyPI blocks from reuse), so shipping the sdist would fail the run.
+      - run: rm -f dist/*.tar.gz
       - name: Publish
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
