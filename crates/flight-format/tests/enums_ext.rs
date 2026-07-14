@@ -1,13 +1,5 @@
-//! Exhaustive coverage of the two on-disk enums: `BlockType` and `EventKind`.
-//! Covers `from_u8` for every valid discriminant, `name()` for each variant,
-//! `from_u8(x as u8) == Some(x)` round-trips, and a full 0..=255 sweep proving
-//! every other byte maps to `None`.
-
 use flight_format::{BlockType, Event, EventKind};
 
-// ------------------------------------------------------------------
-// BlockType: every valid discriminant, one test each.
-// ------------------------------------------------------------------
 
 #[test]
 fn block_meta_from_u8() {
@@ -65,9 +57,6 @@ fn block_ext_from_u8() {
     assert_eq!(BlockType::Ext as u8, 0x7F);
 }
 
-// ------------------------------------------------------------------
-// BlockType: name() for each variant.
-// ------------------------------------------------------------------
 
 #[test]
 fn block_name_meta() {
@@ -200,14 +189,11 @@ fn block_invalid_high_bytes_none() {
 #[test]
 fn block_type_is_copy_and_eq() {
     let a = BlockType::Frame;
-    let b = a; // Copy
+    let b = a;
     assert_eq!(a, b);
     assert_ne!(BlockType::Frame, BlockType::Object);
 }
 
-// ------------------------------------------------------------------
-// EventKind: every valid discriminant, one test each.
-// ------------------------------------------------------------------
 
 #[test]
 fn event_pystart_from_u8() {
@@ -338,7 +324,7 @@ fn event_kind_helper_resolves_valid_raw() {
 
 #[test]
 fn event_kind_helper_none_for_bad_raw() {
-    // A raw event with an out-of-range discriminant resolves to None.
+
     let e = Event {
         kind: 200,
         thread: 0,

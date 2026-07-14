@@ -1,21 +1,3 @@
-"""The object-graph serializer — the most important algorithm of Phase 1.
-
-Serialize arbitrary Python objects into a flat list of nodes, without:
-- executing dangerous code uncontrolled (`__repr__` is user code — guarded by a
-  global deadline and `safe_repr`);
-- looping forever on cycles (identity table);
-- losing aliasing (the *same* object reached twice gets the *same* node id — the
-  clue "this dict is in frame 3 and frame 9");
-- blowing up on giants (per-container/-string limits, depth limit, and a global
-  time + byte budget).
-
-It runs **once, at crash time, in a doomed process** (VISION.md §1.1), so it is
-written for safety and completeness over speed. Output node tuple shape matches
-`flight._core.dump_crash`:
-
-    (id, kind, repr, type_name, length, truncated, [(key_or_None, value_id), ...])
-"""
-
 from __future__ import annotations
 
 import time
@@ -26,9 +8,6 @@ from typing import Any
 from . import _adapters
 from ._scrub import REDACTED, Scrubber
 
-#: Types serialized as repr-only leaves. Their `__dict__` is huge and/or
-#: cyclic (a module pulls in `__builtins__`, a class its whole namespace) and is
-#: almost never the debugging target — expanding them explodes the graph.
 _OPAQUE = (
     types.ModuleType,
     types.FunctionType,
@@ -38,10 +17,9 @@ _OPAQUE = (
     types.CodeType,
     types.FrameType,
     types.TracebackType,
-    type,  # classes / metaclasses
+    type,
 )
 
-# Defaults (VISION.md §9). All overridable via Config.
 DEADLINE_MS = 250
 MAX_BYTES = 20 * 1024 * 1024
 MAX_STR = 10 * 1024
@@ -49,13 +27,10 @@ MAX_CONTAINER = 200
 MAX_DEPTH = 6
 REPR_LIMIT = 200
 
-# Node tuple positions, for readers of this file.
-# (0:id, 1:kind, 2:repr, 3:type_name, 4:length, 5:truncated, 6:items)
 _Node = tuple
 
 
 class GraphSerializer:
-    """Walks live objects into `nodes`, preserving identity, under a budget."""
 
     def __init__(
         self,
@@ -74,7 +49,7 @@ class GraphSerializer:
         self.repr_limit = repr_limit
         self.scrubber = scrubber or Scrubber()
 
-        self.seen: dict[int, int] = {}  # id(obj) -> node id  (cycles + aliasing)
+        self.seen: dict[int, int] = {}
         self.nodes: list[_Node] = []
         self._next = 0
         self.truncated = False
@@ -82,23 +57,16 @@ class GraphSerializer:
         self._bytes_left = max_bytes
         self._queue: deque[tuple[Any, int, int]] = deque()
 
-    # -- public ------------------------------------------------------------
 
     def add_root(self, obj: Any) -> int:
-        """Intern a root object, returning its node id."""
         return self._intern(obj, 0)
 
     def add_local(self, name: str, value: Any) -> int:
-        """Intern a frame local by `(name, value)`, redacting the *value* if the
-        name is sensitive (P5) — the local's name is scrubbed just like a dict
-        key or attribute would be."""
         if self.scrubber.should_redact(name):
             return self._redacted()
         return self._intern(value, 0)
 
     def run(self) -> list[_Node]:
-        """Drain the work queue into `self.nodes`. Idempotent-ish; call once
-        after all roots are added."""
         while self._queue:
             if self._expired():
                 self.truncated = True
@@ -106,13 +74,11 @@ class GraphSerializer:
             obj, nid, depth = self._queue.popleft()
             try:
                 node = self._describe(obj, nid, depth)
-            except BaseException as e:  # __repr__/attr access is user code (P1)
+            except BaseException as e:
                 node = (nid, "object", f"<describe failed: {type(e).__name__}>", None, None, True, [])
             self.nodes.append(node)
             self._bytes_left -= _size(node)
 
-        # Anything interned but never described (budget hit) still has children
-        # pointing at it — emit placeholders so every id resolves.
         if self._queue:
             self.truncated = True
             for _obj, nid, _depth in self._queue:
@@ -120,13 +86,12 @@ class GraphSerializer:
             self._queue.clear()
         return self.nodes
 
-    # -- interning ---------------------------------------------------------
 
     def _intern(self, obj: Any, depth: int) -> int:
         key = id(obj)
         existing = self.seen.get(key)
         if existing is not None:
-            return existing  # cycle / alias: reuse the id
+            return existing
         nid = self._next
         self._next += 1
         self.seen[key] = nid
@@ -139,7 +104,6 @@ class GraphSerializer:
         return nid
 
     def _redacted(self) -> int:
-        """A fresh node standing in for a scrubbed value (never touches it)."""
         nid = self._fresh()
         self.nodes.append((nid, "redacted", REDACTED, None, None, False, []))
         return nid
@@ -147,12 +111,10 @@ class GraphSerializer:
     def _expired(self) -> bool:
         return time.monotonic() > self._deadline or self._bytes_left <= 0
 
-    # -- description -------------------------------------------------------
 
     def _describe(self, obj: Any, nid: int, depth: int) -> _Node:
         t = type(obj)
 
-        # Scalars by exact type (bool before int; bool is an int subclass).
         if obj is None:
             return (nid, "none", "None", None, None, False, [])
         if t is bool:
@@ -168,11 +130,9 @@ class GraphSerializer:
             b = bytes(obj)
             return (nid, "bytes", repr(b[:64]), None, len(b), len(b) > 64, [])
 
-        # Opaque leaves: modules, functions, classes, frames… repr only.
         if isinstance(obj, _OPAQUE):
             return (nid, "object", self._safe_repr(obj), _qualname(type(obj)), None, False, [])
 
-        # Registered adapter (numpy/pandas/…): summary + light fields, never data.
         ad = _adapters.resolve(obj)
         if ad is not None:
             try:
@@ -180,9 +140,8 @@ class GraphSerializer:
                 items = [(str(k), self._intern(v, depth + 1)) for k, v in a.fields.items()]
                 return (nid, a.kind, a.summary, _qualname(t), None, False, items)
             except Exception:
-                pass  # fall through to the generic paths
+                pass
 
-        # Past the depth limit: keep a repr, don't expand further.
         if depth >= self.max_depth:
             return (nid, "truncated", self._safe_repr(obj), _qualname(t), None, True, [])
 
@@ -229,12 +188,11 @@ class GraphSerializer:
         return (nid, "object", self._safe_repr(obj), _qualname(type(obj)), real_len,
                 real_len > self.max_container, items)
 
-    # -- helpers -----------------------------------------------------------
 
     def _safe_repr(self, obj: Any) -> str:
         try:
             r = repr(obj)
-        except BaseException as e:  # __repr__ is user code
+        except BaseException as e:
             return f"<repr failed: {type(e).__name__}>"
         return r if len(r) <= self.repr_limit else r[: self.repr_limit] + "…"
 
@@ -249,8 +207,6 @@ def _qualname(t: type) -> str:
 
 
 def _int_repr(value: int) -> str:
-    """`repr` of an int, but safe for huge ones: CPython raises ValueError when
-    converting an int with more than ~4300 digits to a string (a DoS guard)."""
     try:
         return repr(value)
     except ValueError:
@@ -263,12 +219,6 @@ def _int_repr(value: int) -> str:
 def describe_shallow(
     value: Any, *, max_str: int = MAX_STR, repr_limit: int = REPR_LIMIT
 ) -> tuple[str, "str | None", "str | None", "int | None"]:
-    """A one-level rendering of a value: `(kind, repr, type_name, length)`.
-
-    Used by the Phase-2 mutation log, which stores a snapshot of *what a value
-    was* at each write — a sequence of renderings, not deep graphs. Never
-    expands children and never raises (`__repr__` is user code, P1).
-    """
     t = type(value)
     if value is None:
         return ("none", "None", None, None)
@@ -288,7 +238,6 @@ def describe_shallow(
     if isinstance(value, (list, tuple, set, frozenset)):
         kinds = {list: "list", tuple: "tuple", set: "set", frozenset: "frozenset"}
         return (kinds.get(t, "list"), None, None, _safe_len(value))
-    # generic object: safe repr, no expansion
     try:
         r = repr(value)
     except BaseException as e:
@@ -299,7 +248,6 @@ def describe_shallow(
 
 
 def _size(node: _Node) -> int:
-    """Rough byte cost of a node, for the budget."""
     rep = node[2] or ""
     return 24 + len(rep) + 16 * len(node[6])
 
@@ -319,7 +267,6 @@ def _safe_items(obj: Any):
 
 
 def _get_attrs(obj: Any) -> dict[str, Any]:
-    """Best-effort attribute snapshot from `__dict__` and `__slots__`."""
     out: dict[str, Any] = {}
     d = getattr(obj, "__dict__", None)
     if isinstance(d, dict):

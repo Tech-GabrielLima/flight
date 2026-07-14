@@ -1,7 +1,3 @@
-//! Extended reader coverage: every typed accessor, block ordering, unknown /
-//! ext / timeline blocks, index fast-path vs scan fallback, and the header
-//! error surface. Complements `roundtrip.rs`.
-
 use std::collections::HashMap;
 
 use flight_format::{
@@ -11,9 +7,6 @@ use flight_format::{
 };
 use flight_reader::FlightFile;
 
-// ---------------------------------------------------------------------------
-// builders
-// ---------------------------------------------------------------------------
 
 fn sample_meta() -> MetaBlock {
     MetaBlock {
@@ -167,8 +160,7 @@ fn sample_source(name: &str) -> SourceFile {
     }
 }
 
-/// A file containing every content block type this reader knows plus an
-/// unknown / ext / timeline block, cleanly closed.
+
 fn write_kitchen_sink() -> Vec<u8> {
     let mut buf = Vec::new();
     let mut w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
@@ -184,13 +176,13 @@ fn write_kitchen_sink() -> Vec<u8> {
         .unwrap();
     w.write_block(BlockType::Source, &vec![sample_source("b.py")])
         .unwrap();
-    // A timeline block (known type, but the reader has no typed accessor).
+
     w.write_block_msgpack(BlockType::Timeline as u8, &rmp_serde::to_vec(&"tl").unwrap())
         .unwrap();
-    // An ext block (0x7F).
+
     w.write_block_msgpack(BlockType::Ext as u8, &rmp_serde::to_vec(&"ext").unwrap())
         .unwrap();
-    // A block type from the future.
+
     w.write_block_msgpack(0x42, &rmp_serde::to_vec(&"mystery").unwrap())
         .unwrap();
     w.write_block(BlockType::EventRing, &sample_ring(30))
@@ -209,9 +201,6 @@ fn write_full_file() -> Vec<u8> {
     buf
 }
 
-// ---------------------------------------------------------------------------
-// header
-// ---------------------------------------------------------------------------
 
 #[test]
 fn format_version_is_one() {
@@ -245,9 +234,6 @@ fn header_created_ms_preserved() {
     assert_eq!(f.header.created_unix_ms, 1_783_000_000_000);
 }
 
-// ---------------------------------------------------------------------------
-// accessors — present data
-// ---------------------------------------------------------------------------
 
 #[test]
 fn meta_accessor_decodes_all_fields() {
@@ -408,7 +394,7 @@ fn sources_single_block() {
 
 #[test]
 fn sources_multiple_blocks_all_collected() {
-    // The kitchen sink has two SOURCE blocks — sources() flattens both.
+
     let f = FlightFile::from_bytes(&write_kitchen_sink()).unwrap();
     let names: Vec<String> = f.sources().into_iter().map(|s| s.filename).collect();
     assert_eq!(names, vec!["a.py".to_string(), "b.py".to_string()]);
@@ -435,9 +421,6 @@ fn many_source_blocks_all_collected() {
     assert_eq!(f.sources().len(), 25);
 }
 
-// ---------------------------------------------------------------------------
-// aliasing
-// ---------------------------------------------------------------------------
 
 #[test]
 fn aliases_finds_object_across_frames() {
@@ -451,7 +434,7 @@ fn aliases_finds_object_across_frames() {
 #[test]
 fn aliases_of_shared_scalar() {
     let f = FlightFile::from_bytes(&write_kitchen_sink()).unwrap();
-    // object 3 is local "x" in frame 0 and "n" in frame 1.
+
     assert_eq!(
         f.aliases(3),
         vec![(0, "x".to_string()), (1, "n".to_string())]
@@ -470,9 +453,6 @@ fn aliases_empty_when_no_frames() {
     assert!(f.aliases(7).is_empty());
 }
 
-// ---------------------------------------------------------------------------
-// accessors — absent data returns empty, never errors
-// ---------------------------------------------------------------------------
 
 #[test]
 fn meta_absent_returns_none() {
@@ -536,9 +516,6 @@ fn sources_absent_is_empty() {
     assert!(f.sources().is_empty());
 }
 
-// ---------------------------------------------------------------------------
-// blocks ordering / raw blocks
-// ---------------------------------------------------------------------------
 
 #[test]
 fn blocks_are_in_file_order() {
@@ -640,14 +617,11 @@ fn type_name_unknown_block() {
 fn unknown_block_present_but_skipped_by_typed_accessors() {
     let f = FlightFile::from_bytes(&write_kitchen_sink()).unwrap();
     assert!(f.blocks.iter().any(|b| b.block_type == 0x42));
-    // The unknown/ext/timeline blocks don't disturb the typed views.
+
     assert_eq!(f.meta().unwrap(), sample_meta());
     assert_eq!(f.event_ring().unwrap(), sample_ring(30));
 }
 
-// ---------------------------------------------------------------------------
-// "first block wins" for the single-block accessors
-// ---------------------------------------------------------------------------
 
 #[test]
 fn first_meta_block_wins() {
@@ -674,9 +648,6 @@ fn first_event_ring_block_wins() {
     assert_eq!(f.event_ring().unwrap().events.len(), 5);
 }
 
-// ---------------------------------------------------------------------------
-// index / scan / clean-close semantics
-// ---------------------------------------------------------------------------
 
 #[test]
 fn clean_close_uses_index() {
@@ -702,7 +673,7 @@ fn footerless_uses_scan_and_is_not_partial() {
 fn index_and_scan_agree_on_block_count() {
     let clean = write_kitchen_sink();
     let via_index = FlightFile::from_bytes(&clean).unwrap();
-    // Break the trailer to force the scan path over the same bytes.
+
     let mut scanned_bytes = clean.clone();
     let n = scanned_bytes.len();
     scanned_bytes[n - 1] = b'?';
@@ -728,8 +699,8 @@ fn index_and_scan_agree_on_accessor_output() {
 
 #[test]
 fn finish_with_no_content_blocks() {
-    // A file that is opened and cleanly closed with no content: just header +
-    // INDEX + trailer.
+
+
     let mut buf = Vec::new();
     let w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
     w.finish().unwrap();
@@ -743,7 +714,7 @@ fn finish_with_no_content_blocks() {
 
 #[test]
 fn header_only_file_no_footer() {
-    // Header written, process dies before any block or footer.
+
     let mut buf = Vec::new();
     let w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
     drop(w);
@@ -768,7 +739,7 @@ fn broken_trailer_magic_falls_back_to_scan() {
 fn index_length_too_large_falls_back_to_scan() {
     let mut bytes = write_kitchen_sink();
     let n = bytes.len();
-    // Set the index_total_len to something absurdly large: checked_sub underflows.
+
     bytes[n - 8] = 0xFF;
     bytes[n - 7] = 0xFF;
     bytes[n - 6] = 0xFF;
@@ -782,7 +753,7 @@ fn index_length_too_large_falls_back_to_scan() {
 fn index_start_before_body_falls_back_to_scan() {
     let mut bytes = write_kitchen_sink();
     let n = bytes.len();
-    // index_total_len = n - TRAILER_LEN pushes index_start to 0 (< body_start).
+
     let bogus = (n - TRAILER_LEN) as u32;
     bytes[n - 8..n - 4].copy_from_slice(&bogus.to_le_bytes());
     let f = FlightFile::from_bytes(&bytes).unwrap();
@@ -792,8 +763,8 @@ fn index_start_before_body_falls_back_to_scan() {
 
 #[test]
 fn index_disagreeing_with_bytes_falls_back_to_scan() {
-    // Flip the META block's type byte: the footer index still says 0x01 there,
-    // the bytes now say 0x42 → index disagrees → linear scan.
+
+
     let clean = write_kitchen_sink();
     let f0 = FlightFile::from_bytes(&clean).unwrap();
     let meta_off = f0
@@ -806,16 +777,13 @@ fn index_disagreeing_with_bytes_falls_back_to_scan() {
     bytes[meta_off] = 0x42;
     let f = FlightFile::from_bytes(&bytes).unwrap();
     assert!(!f.used_index);
-    // The former META is now an unknown block; typed meta() is gone but the
-    // rest survives.
+
+
     assert!(f.meta().is_none());
     assert!(f.blocks.iter().any(|b| b.block_type == 0x42));
     assert_eq!(f.event_ring().unwrap(), sample_ring(30));
 }
 
-// ---------------------------------------------------------------------------
-// open() from disk
-// ---------------------------------------------------------------------------
 
 fn scratch(name: &str) -> std::path::PathBuf {
     let mut p = std::env::temp_dir();
@@ -845,9 +813,6 @@ fn open_nonexistent_path_is_err() {
     assert!(FlightFile::open(&path).is_err());
 }
 
-// ---------------------------------------------------------------------------
-// header error surface
-// ---------------------------------------------------------------------------
 
 #[test]
 fn empty_input_is_err() {
@@ -888,14 +853,14 @@ fn future_version_rejected() {
 #[test]
 fn header_declaring_more_meta_than_present_is_err() {
     let mut bytes = write_full_file();
-    // Meta length points past EOF.
+
     bytes[6..10].copy_from_slice(&(u32::MAX).to_le_bytes());
     assert!(FlightFile::from_bytes(&bytes).is_err());
 }
 
 #[test]
 fn corrupt_meta_msgpack_is_err() {
-    // Build a header claiming a 3-byte meta that is not valid msgpack map.
+
     let mut bytes = Vec::new();
     bytes.extend_from_slice(flight_format::MAGIC);
     bytes.extend_from_slice(&1u16.to_le_bytes());
@@ -906,14 +871,14 @@ fn corrupt_meta_msgpack_is_err() {
 
 #[test]
 fn exactly_header_len_with_zero_meta_parses() {
-    // magic + version + meta_len(0) then an empty (map) meta won't decode;
-    // but a zero-length meta means rmp tries to decode an empty slice → err.
+
+
     let mut bytes = Vec::new();
     bytes.extend_from_slice(flight_format::MAGIC);
     bytes.extend_from_slice(&1u16.to_le_bytes());
     bytes.extend_from_slice(&0u32.to_le_bytes());
-    // Empty meta slice is not a valid HeaderMeta map → err (still no panic).
-    let _ = FlightFile::from_bytes(&bytes); // must not panic
+
+    let _ = FlightFile::from_bytes(&bytes);
 }
 
 #[test]

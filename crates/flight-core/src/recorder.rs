@@ -8,10 +8,7 @@ use flight_format::{CodeInfo, Event, EventKind, RingPayload};
 
 use crate::ring::Ring;
 
-/// A minimal hasher for our integer keys (code ids are pointers, thread ids are
-/// small). The default `HashMap` uses SipHash — DoS-resistant but ~15 ns per
-/// lookup, which shows up on the per-event hot path. Fibonacci mixing spreads
-/// aligned pointers across buckets in ~1 ns and needs no external crate.
+
 #[derive(Default)]
 struct IntHasher(u64);
 
@@ -29,7 +26,7 @@ impl Hasher for IntHasher {
         self.0 = (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     }
     fn write(&mut self, bytes: &[u8]) {
-        // Not used for our integer keys, but kept correct as a fallback.
+
         for &b in bytes {
             self.0 = (self.0 ^ b as u64).wrapping_mul(0x0100_0000_01B3);
         }
@@ -38,11 +35,7 @@ impl Hasher for IntHasher {
 
 type IntMap<K, V> = HashMap<K, V, BuildHasherDefault<IntHasher>>;
 
-/// A per-thread cache of the current recorder's ring, so the hot path takes no
-/// lock at all. Keyed by `(recorder id, generation)`: a different recorder or a
-/// `reset()` (which bumps the generation) invalidates the cache, and — crucially
-/// — the stale ring pointer is *never dereferenced* because the generation check
-/// happens first (so `reset()` freeing the ring is safe).
+
 #[derive(Clone, Copy)]
 struct Slot {
     rec_id: u64,
@@ -57,28 +50,21 @@ thread_local! {
 
 static NEXT_RECORDER_ID: AtomicU64 = AtomicU64::new(1);
 
-/// The process-wide recorder: a global logical clock, one [`Ring`] per OS
-/// thread, a side map from `code_id` to [`CodeInfo`], and the interesting/deny
-/// policy cache.
-///
-/// The hot path (`record`) is lock-free in the common case: it stamps a logical
-/// time (one atomic add) and pushes 24 bytes into a thread-local ring found
-/// through the [`Slot`] cache. Locks are taken only when a *new* thread first
-/// records, when a *new* code object first appears, or on drain/reset.
+
 pub struct Recorder {
     id: u64,
-    /// Bumped by `reset()`; invalidates every thread's [`Slot`] cache.
+
     generation: AtomicU64,
     clock: AtomicU64,
     ring_cap: usize,
     next_thread: AtomicU64,
     rings: Mutex<IntMap<u16, Box<Ring>>>,
     codes: Mutex<IntMap<u64, CodeInfo>>,
-    /// `code_id -> is this code interesting to record?` (computed once).
+
     interesting: Mutex<IntMap<u64, bool>>,
-    /// Path prefixes whose code is *not* recorded (stdlib, site-packages…).
+
     deny: Mutex<Vec<String>>,
-    /// Substrings that force-include a path even under a denied prefix.
+
     force: Mutex<Vec<String>>,
 }
 
@@ -98,8 +84,7 @@ impl Recorder {
         }
     }
 
-    /// Assign this OS thread a compact id and ring (slow path, once per thread
-    /// per generation). Returns the id and a pointer valid until `reset()`.
+
     fn make_thread_ring(&self) -> (u16, *const Ring) {
         let tid = (self.next_thread.fetch_add(1, Ordering::Relaxed) & 0xFFFF) as u16;
         let mut rings = self.rings.lock().unwrap();
@@ -109,9 +94,7 @@ impl Recorder {
         (tid, &**ring as *const Ring)
     }
 
-    /// Record one execution event. The hot path — no lock in the common case.
-    ///
-    /// `line` is meaningful only for LINE events; pass 0 otherwise.
+
     #[inline]
     pub fn record(&self, kind: EventKind, code_id: u64, line: u32) {
         let tstamp = self.clock.fetch_add(1, Ordering::Relaxed);
@@ -131,33 +114,27 @@ impl Recorder {
                     s
                 }
             };
-            // SAFETY: `ring` points into a Box owned by `self.rings`; it is only
-            // invalidated by `reset()`, which bumps the generation so the branch
-            // above re-fetches before we ever dereference a freed pointer. Pushes
-            // are single-writer per thread (this thread owns this ring).
+
+
             unsafe {
                 (*slot.ring).push(Event::new(kind, slot.thread, line, code_id, tstamp));
             }
         });
     }
 
-    // -- interesting / deny policy -----------------------------------------
 
-    /// Replace the deny/force policy and clear the cached decisions.
     pub fn set_filter(&self, deny: Vec<String>, force: Vec<String>) {
         *self.deny.lock().unwrap() = deny;
         *self.force.lock().unwrap() = force;
         self.interesting.lock().unwrap().clear();
     }
 
-    /// Cached interesting decision for a code id, if already computed.
+
     pub fn interesting_cached(&self, code_id: u64) -> Option<bool> {
         self.interesting.lock().unwrap().get(&code_id).copied()
     }
 
-    /// Decide (and cache) whether code from `filename` is interesting. Mirrors
-    /// the Python policy: synthetic files (`<...>`) and denied prefixes are out,
-    /// unless force-included. Paths are canonicalized (like `realpath`) once.
+
     pub fn decide_interesting(&self, code_id: u64, filename: &str) -> bool {
         let value = self.compute_interesting(filename);
         self.interesting.lock().unwrap().insert(code_id, value);
@@ -188,7 +165,7 @@ impl Recorder {
             .any(|d| real.starts_with(d.as_str()))
     }
 
-    /// Register the file/qualname of a code object the first time we see it.
+
     pub fn register_code(&self, code_id: u64, file: &str, qualname: &str, first_line: u32) -> bool {
         let mut codes = self.codes.lock().unwrap();
         if codes.contains_key(&code_id) {
@@ -205,9 +182,7 @@ impl Recorder {
         true
     }
 
-    // -- introspection / drain ---------------------------------------------
 
-    /// Current generation (bumped by `reset()`) — invalidates per-thread caches.
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
     }
@@ -224,8 +199,7 @@ impl Recorder {
         self.codes.lock().unwrap().len()
     }
 
-    /// Drain every thread's ring, merge by logical timestamp, and attach only
-    /// the referenced code map entries. This is the EVENT_RING payload.
+
     pub fn snapshot_ring(&self) -> RingPayload {
         let mut events = Vec::new();
         let mut wrapped = false;
@@ -253,8 +227,7 @@ impl Recorder {
         }
     }
 
-    /// Reset all state. Bumps the generation so stale thread-local ring
-    /// pointers are re-fetched (never dereferenced) before the next push.
+
     pub fn reset(&self) {
         self.rings.lock().unwrap().clear();
         self.codes.lock().unwrap().clear();
@@ -308,7 +281,7 @@ mod tests {
 
     #[test]
     fn distinct_os_threads_get_distinct_rings() {
-        // Thread identity is the OS thread now: two real threads → two rings.
+
         let rec = Arc::new(Recorder::new(64));
         let mut handles = Vec::new();
         for _ in 0..2 {
@@ -334,7 +307,7 @@ mod tests {
         assert_eq!(rec.thread_count(), 0);
         assert_eq!(rec.code_count(), 0);
         assert!(rec.snapshot_ring().events.is_empty());
-        // Recording after reset works (slot is re-fetched, not a stale pointer).
+
         rec.record(EventKind::Line, 1, 2);
         assert_eq!(rec.total_events(), 1);
         assert_eq!(rec.snapshot_ring().events.len(), 1);
@@ -347,8 +320,8 @@ mod tests {
         assert!(!rec.compute_interesting("<string>"));
         assert!(!rec.compute_interesting(""));
         assert!(!rec.compute_interesting("/usr/lib/python3.13/json/__init__.py"));
-        // A path that doesn't exist can't be canonicalized → uses the raw path;
-        // not under a denied prefix → interesting.
+
+
         assert!(rec.compute_interesting("/home/me/project/app.py"));
     }
 
@@ -367,7 +340,6 @@ mod recorder_ext {
     use super::*;
     use std::sync::Arc;
 
-    // -- register_code ------------------------------------------------------
 
     #[test]
     fn register_code_returns_true_first_time_false_after() {
@@ -398,7 +370,6 @@ mod recorder_ext {
         assert_eq!(rec.code_count(), 50);
     }
 
-    // -- counters -----------------------------------------------------------
 
     #[test]
     fn fresh_recorder_counters_are_zero() {
@@ -426,7 +397,6 @@ mod recorder_ext {
         assert_eq!(rec.thread_count(), 1);
     }
 
-    // -- snapshot ordering & code map --------------------------------------
 
     #[test]
     fn snapshot_events_are_sorted_by_tstamp() {
@@ -480,7 +450,7 @@ mod recorder_ext {
     #[test]
     fn snapshot_event_for_unregistered_code_has_no_code_entry() {
         let rec = Recorder::new(64);
-        rec.record(EventKind::Line, 999, 1); // never registered
+        rec.record(EventKind::Line, 999, 1);
         let snap = rec.snapshot_ring();
         assert_eq!(snap.events.len(), 1);
         assert!(snap.codes.is_empty());
@@ -497,7 +467,7 @@ mod recorder_ext {
 
     #[test]
     fn snapshot_reports_wrapped_when_ring_overflows() {
-        let rec = Recorder::new(16); // tiny ring
+        let rec = Recorder::new(16);
         rec.register_code(1, "a.py", "f", 1);
         for i in 0..100 {
             rec.record(EventKind::Line, 1, i);
@@ -505,11 +475,10 @@ mod recorder_ext {
         let snap = rec.snapshot_ring();
         assert!(snap.wrapped);
         assert_eq!(snap.events.len(), 16);
-        // total_events still counts every record even though the ring dropped some.
+
         assert_eq!(rec.total_events(), 100);
     }
 
-    // -- reset --------------------------------------------------------------
 
     #[test]
     fn reset_bumps_generation() {
@@ -549,7 +518,6 @@ mod recorder_ext {
         assert_eq!(rec.snapshot_ring().events.len(), 2);
     }
 
-    // -- interesting / deny policy -----------------------------------------
 
     #[test]
     fn synthetic_and_empty_filenames_are_never_interesting() {
@@ -582,7 +550,7 @@ mod recorder_ext {
             vec!["/usr/lib/python".to_string()],
             vec!["mypackage".to_string()],
         );
-        // A denied prefix but containing the forced substring → interesting.
+
         assert!(rec.compute_interesting("/usr/lib/python3.13/site-packages/mypackage/x.py"));
     }
 
@@ -614,7 +582,6 @@ mod recorder_ext {
         assert!(!rec.decide_interesting(2, "<string>"));
     }
 
-    // -- concurrency --------------------------------------------------------
 
     #[test]
     fn concurrent_threads_get_distinct_rings_and_all_events_survive() {
@@ -635,7 +602,7 @@ mod recorder_ext {
         assert_eq!(rec.total_events(), 6 * 200);
         let snap = rec.snapshot_ring();
         assert_eq!(snap.events.len(), 6 * 200);
-        // Merged snapshot is globally ordered by the shared logical clock.
+
         assert!(snap.events.windows(2).all(|w| w[0].tstamp < w[1].tstamp));
     }
 
@@ -661,8 +628,8 @@ mod recorder_ext {
 
     #[test]
     fn distinct_recorders_have_distinct_ids() {
-        // Two recorders don't share the thread-local slot: recording into one
-        // then the other from the same thread works and keeps counts separate.
+
+
         let a = Recorder::new(64);
         let b = Recorder::new(64);
         a.record(EventKind::Line, 1, 1);

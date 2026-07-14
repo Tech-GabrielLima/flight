@@ -1,9 +1,3 @@
-"""The `flight` command line: `run` a script under recording, `inspect` a file.
-
-    python -m flight run myscript.py --script-args
-    python -m flight inspect crash.flight
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -16,7 +10,6 @@ from . import __version__, install, read
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    """Run a script with Flight recording installed, like `python script.py`."""
     install(
         output_dir=Path(args.output_dir) if args.output_dir else Path.cwd(),
         record_lines=args.lines,
@@ -29,7 +22,6 @@ def _cmd_run(args: argparse.Namespace) -> int:
         correlate(root=True)
 
     script = args.script
-    # Make the script see a normal argv and a normal sys.path[0].
     sys.argv = [script, *args.script_args]
     sys.path.insert(0, str(Path(script).resolve().parent))
     try:
@@ -37,8 +29,6 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 0
     except SystemExit as e:
         return int(e.code) if isinstance(e.code, int) else (0 if e.code is None else 1)
-    # Any other exception propagates to sys.excepthook, which Flight has
-    # wrapped to write the .flight — so we let it through.
 
 
 def _fmt_time(unix_ms: int) -> str:
@@ -48,7 +38,6 @@ def _fmt_time(unix_ms: int) -> str:
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
-    """Print a human summary of a `.flight` file."""
     f = read(args.file)
     status = "PARTIAL" if f.partial else "complete"
     idx = "index" if f.used_index else "linear-scan"
@@ -92,14 +81,11 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
-# Scalar/leaf kinds: sharing one of these across frames is not the aliasing
-# insight (None/True/small ints are singletons), so we don't flag them.
 _SCALAR_KINDS = {"none", "bool", "int", "float", "str", "bytes", "redacted", "truncated"}
 
 
 def _print_frames(f, *, show_locals: bool, max_locals: int) -> None:
     crash = f.crash()
-    # Which reference objects appear in more than one frame → aliased (↔).
     counts: dict[int, int] = {}
     for fr in crash.frames:
         for _name, oid in fr.locals:
@@ -125,7 +111,6 @@ def _clip(s: str, width: int = 68) -> str:
 
 
 def _cmd_timeline(args: argparse.Namespace) -> int:
-    """Print the mutation timeline of a scope `.flight`."""
     f = read(args.file)
     if not f.has_mutations:
         print("no scope recording in this file (was it written by `with flight.record()`?)")
@@ -156,7 +141,6 @@ def _cmd_timeline(args: argparse.Namespace) -> int:
 
 
 def _cmd_repro(args: argparse.Namespace) -> int:
-    """Generate (and verify) a standalone reproduction script from a crash."""
     from ._repro import write_repro
 
     result = write_repro(
@@ -177,9 +161,19 @@ def _cmd_repro(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_why(args: argparse.Namespace) -> int:
+    from ._slice import backward_slice
+
+    f = read(args.file)
+    if not f.has_crash:
+        print("no crash frames in this file (nothing to slice)", file=sys.stderr)
+        return 1
+    sl = backward_slice(f, frame=args.frame, var=args.var, max_hops=args.max_hops)
+    print(sl.render())
+    return 0 if sl.hops else 1
+
+
 def _cmd_explain(args: argparse.Namespace) -> int:
-    """Root-cause a crash `.flight`: a heuristic summary (offline), or the
-    LLM-ready prompt (--prompt), or a model's explanation (--llm)."""
     from ._explain import explain
 
     result = explain(args.file, use_llm=args.llm)
@@ -190,8 +184,37 @@ def _cmd_explain(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_generalize(args: argparse.Namespace) -> int:
+    from ._generalize import generalize
+
+    g = generalize(args.file)
+    if args.hypothesis:
+        text = g.as_hypothesis()
+        if args.output:
+            Path(args.output).write_text(text)
+            print(f"wrote {args.output}")
+        else:
+            print(text)
+        return 0 if g.reproduced else 1
+    print(g.render())
+    if args.property:
+        prop = g.as_property()
+        print(f"\ncandidate property: {prop}" if prop else "\n(no single-value property found)")
+    return 0 if g.reproduced else 1
+
+
+def _cmd_fix(args: argparse.Namespace) -> int:
+    from ._agent import VERIFIED, fix
+
+    result = fix(args.file, max_tries=args.max_tries, use_llm=args.llm)
+    print(result.report())
+    if result.patch and args.output and result.status == VERIFIED:
+        Path(args.output).write_text(result.patch)
+        print(f"\npatch saved → {args.output}")
+    return 0 if result.verified else 1
+
+
 def _cmd_fingerprint(args: argparse.Namespace) -> int:
-    """Print a crash's dedup fingerprint (Sentry-style, by frame + state)."""
     from ._fingerprint import fingerprint
 
     f = read(args.file)
@@ -202,21 +225,48 @@ def _cmd_fingerprint(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_bisect(args: argparse.Namespace) -> int:
+    from ._bisect import bisect_corpus, bisect_repro
+
+    if args.repro:
+        if not (args.good and args.bad):
+            print("active bisect needs --good and --bad refs", file=sys.stderr)
+            return 2
+        result = bisect_repro(
+            args.repro, args.good, args.bad, build_cmd=args.build, timeout=args.timeout
+        )
+    else:
+        if not args.dir or not args.fingerprint:
+            print("passive bisect needs a directory and --fingerprint", file=sys.stderr)
+            return 2
+        result = bisect_corpus(args.dir, args.fingerprint)
+    print(result.render())
+    return 0 if result.found else 1
+
+
 def _cmd_diff(args: argparse.Namespace) -> int:
-    """Compare two `.flight` files and report the first point they diverged."""
     from ._diff import diff_files
+
+    if getattr(args, "html", False):
+        from ._diff import diff_html
+
+        html = diff_html(args.left, args.right)
+        if getattr(args, "output", None):
+            Path(args.output).write_text(html)
+            print(f"wrote {args.output}")
+        else:
+            print(html)
+        d = diff_files(args.left, args.right)
+        return 1 if not d.identical else 0
 
     d = diff_files(args.left, args.right)
     print(d.render())
     if d.kind == "incomparable":
         return 2
-    return 1 if not d.identical else 0  # like diff(1): nonzero when they differ
+    return 1 if not d.identical else 0
 
 
 def _cmd_debug(args: argparse.Namespace) -> int:
-    """Reverse-debug a scope `.flight`. With `--find`, answer a "breakpoint in
-    the past" query on the command line; otherwise start a DAP server on stdio
-    for VS Code / PyCharm (which get Step-Back / Reverse buttons for free)."""
     f = read(args.file)
     if not f.has_mutations:
         print("no scope recording in this file (was it written by `with flight.record()`?)")
@@ -242,7 +292,6 @@ def _cmd_debug(args: argparse.Namespace) -> int:
         print("  state there: " + (", ".join(f"{k}={v}" for k, v in sorted(shown.items()))))
         return 0
 
-    # DAP server over stdio for an editor.
     from ._dap import DebugAdapter, serve
 
     adapter = DebugAdapter(path=args.file)
@@ -251,8 +300,6 @@ def _cmd_debug(args: argparse.Namespace) -> int:
 
 
 def _cmd_trace(args: argparse.Namespace) -> int:
-    """Group `.flight` files by distributed-trace id → the cross-service crash
-    graph. Each service that handled the same request shares one trace id."""
     from ._correlation import trace_graph
 
     paths: list[Path] = []
@@ -287,7 +334,6 @@ def _cmd_trace(args: argparse.Namespace) -> int:
 
 
 def _cmd_ci(args: argparse.Namespace) -> int:
-    """Render a Markdown root-cause comment for a crash `.flight` (for CI)."""
     from ._ci import render_comment
 
     target = Path(args.file)
@@ -307,7 +353,6 @@ def _cmd_ci(args: argparse.Namespace) -> int:
 
 
 def _passphrase(args) -> str:
-    """Resolve a passphrase from --passphrase, $FLIGHT_PASSPHRASE, or a prompt."""
     import os
 
     if getattr(args, "passphrase", None):
@@ -321,7 +366,6 @@ def _passphrase(args) -> str:
 
 
 def _cmd_encrypt(args: argparse.Namespace) -> int:
-    """Encrypt a `.flight` at rest (AES-256-GCM; needs the [crypto] extra)."""
     from ._crypto import CryptoError, encrypt_file
 
     try:
@@ -334,7 +378,6 @@ def _cmd_encrypt(args: argparse.Namespace) -> int:
 
 
 def _cmd_decrypt(args: argparse.Namespace) -> int:
-    """Decrypt a Flight envelope produced by `flight encrypt`."""
     from ._crypto import CryptoError, decrypt_file
 
     try:
@@ -346,14 +389,33 @@ def _cmd_decrypt(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+    from ._fleet import FleetIndex, serve
+
+    if args.ingest:
+        idx = FleetIndex(args.store, index=args.index)
+        n = 0
+        for p in sorted(Path(args.ingest).glob("*.flight")):
+            if idx.ingest_path(p) is not None:
+                n += 1
+        print(f"ingested {n} crash .flight file(s) into {args.store}")
+        return 0
+    serve(args.store, host=args.host, port=args.port, index=args.index)
+    return 0
+
+
 def _cmd_view(args: argparse.Namespace) -> int:
-    """Open the TUI viewer on a `.flight` file."""
+    if getattr(args, "serve", False):
+        from ._whatif import serve_whatif
+
+        serve_whatif(args.file, host=getattr(args, "host", "127.0.0.1"), port=getattr(args, "port", 8070))
+        return 0
     try:
         from ._viewer import run as run_viewer
     except ImportError:
         print(
             "the viewer needs Textual — install it with:\n"
-            "    pip install 'flight-recorder[viewer]'   (or: pip install textual)",
+            "    pip install 'pyflight[viewer]'   (or: pip install textual)",
             file=sys.stderr,
         )
         return 1
@@ -405,8 +467,19 @@ def build_parser() -> argparse.ArgumentParser:
     tl.add_argument("--limit", type=int, default=50, help="max mutations to print (default 50)")
     tl.set_defaults(func=_cmd_timeline)
 
-    vw = sub.add_parser("view", help="open the interactive TUI viewer (needs textual)")
+    sv = sub.add_parser("serve", help="fleet mode: collector + index + dashboard over a store")
+    sv.add_argument("store", help="directory to hold the index + ingested blobs")
+    sv.add_argument("--host", default="127.0.0.1", help="bind host (default 127.0.0.1)")
+    sv.add_argument("--port", type=int, default=8080, help="bind port (default 8080)")
+    sv.add_argument("--index", help="index DSN (default sqlite in the store dir)")
+    sv.add_argument("--ingest", metavar="DIR", help="ingest a directory of .flight files and exit")
+    sv.set_defaults(func=_cmd_serve)
+
+    vw = sub.add_parser("view", help="open the TUI viewer, or --serve a browser what-if console")
     vw.add_argument("file", help="path to the .flight file")
+    vw.add_argument("--serve", action="store_true", help="serve a browser what-if console instead of the TUI")
+    vw.add_argument("--host", default="127.0.0.1", help="bind host for --serve (default 127.0.0.1)")
+    vw.add_argument("--port", type=int, default=8070, help="bind port for --serve (default 8070)")
     vw.set_defaults(func=_cmd_view)
 
     rp = sub.add_parser("repro", help="generate a standalone reproduction script from a crash")
@@ -419,21 +492,60 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rp.set_defaults(func=_cmd_repro)
 
+    wy = sub.add_parser(
+        "why", help="backward slice: why is a value what it is? (writes + aliasings)"
+    )
+    wy.add_argument("file", help="path to the crash .flight file")
+    wy.add_argument("--frame", type=int, default=0, help="frame index to slice from (default 0)")
+    wy.add_argument("--var", required=True, help="the local variable to explain")
+    wy.add_argument("--max-hops", type=int, default=32, help="max slice hops (default 32)")
+    wy.set_defaults(func=_cmd_why)
+
     ex = sub.add_parser("explain", help="root-cause a crash .flight (heuristics; optional LLM)")
     ex.add_argument("file", help="path to the crash .flight file")
     ex.add_argument("--prompt", action="store_true", help="print the LLM-ready prompt only")
     ex.add_argument("--llm", action="store_true", help="call a configured LLM provider")
     ex.set_defaults(func=_cmd_explain)
 
+    gn = sub.add_parser(
+        "generalize", help="find the boundary at which a recorded value flips the failure"
+    )
+    gn.add_argument("file", help="path to a deterministic crash .flight file")
+    gn.add_argument("--property", action="store_true", help="also print the candidate guard")
+    gn.add_argument("--hypothesis", action="store_true", help="emit a Hypothesis property-test scaffold")
+    gn.add_argument("-o", "--output", help="write the scaffold here (with --hypothesis)")
+    gn.set_defaults(func=_cmd_generalize)
+
     fp = sub.add_parser("fingerprint", help="print a crash's dedup fingerprint (frame + state)")
     fp.add_argument("file", help="path to the crash .flight file")
     fp.set_defaults(func=_cmd_fingerprint)
+
+    fx = sub.add_parser("fix", help="propose and verify a patch that removes the crash")
+    fx.add_argument("file", help="path to the crash .flight file")
+    fx.add_argument("--llm", action="store_true", help="use a configured LLM provider")
+    fx.add_argument("--max-tries", type=int, default=3, help="max patch attempts (default 3)")
+    fx.add_argument("-o", "--output", help="write the verified patch here (default fix.patch)")
+    fx.set_defaults(func=_cmd_fix)
+
+    bs = sub.add_parser(
+        "bisect", help="find the commit that introduced a bug (passive corpus or active repro)"
+    )
+    bs.add_argument("dir", nargs="?", help="passive: directory of .flight files to group")
+    bs.add_argument("--fingerprint", help="passive: the crash fingerprint to date")
+    bs.add_argument("--repro", metavar="FILE", help="active: a crash .flight to replay per commit")
+    bs.add_argument("--good", help="active: a ref known to be good (bug absent)")
+    bs.add_argument("--bad", help="active: a ref known to be bad (bug present, default HEAD)")
+    bs.add_argument("--build", help="active: shell command to build at each commit (optional)")
+    bs.add_argument("--timeout", type=int, default=60, help="active: per-commit timeout seconds")
+    bs.set_defaults(func=_cmd_bisect)
 
     df = sub.add_parser(
         "diff", help="compare two .flight files and report the first divergence"
     )
     df.add_argument("left", help="the first .flight file (e.g. a run that worked)")
     df.add_argument("right", help="the second .flight file (e.g. a run that failed)")
+    df.add_argument("--html", action="store_true", help="render a self-contained side-by-side diff page")
+    df.add_argument("-o", "--output", help="write the HTML here (with --html; default stdout)")
     df.set_defaults(func=_cmd_diff)
 
     dbg = sub.add_parser(

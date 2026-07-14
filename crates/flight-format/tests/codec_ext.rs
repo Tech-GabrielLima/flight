@@ -1,6 +1,3 @@
-//! msgpack round-trips for the primitive record types (`Event`, `CodeInfo`,
-//! `IndexEntry`) and the compress/decompress codec.
-
 use flight_format::{compress, decompress, from_msgpack, to_msgpack, CodeInfo, Event, EventKind, IndexEntry};
 
 fn rt<T>(v: &T) -> T
@@ -10,7 +7,7 @@ where
     from_msgpack(&to_msgpack(v).unwrap()).unwrap()
 }
 
-// Build a msgpack fixstr (len < 32).
+
 fn mp_str(s: &str) -> Vec<u8> {
     let b = s.as_bytes();
     assert!(b.len() < 32);
@@ -19,9 +16,6 @@ fn mp_str(s: &str) -> Vec<u8> {
     v
 }
 
-// ------------------------------------------------------------------
-// Event round-trips.
-// ------------------------------------------------------------------
 
 #[test]
 fn event_rt_basic() {
@@ -77,7 +71,7 @@ fn event_rt_max_fields() {
 
 #[test]
 fn event_rt_preserves_raw_kind_byte() {
-    // Even an out-of-range raw discriminant survives the round-trip verbatim.
+
     let e = Event {
         kind: 42,
         thread: 7,
@@ -90,8 +84,8 @@ fn event_rt_preserves_raw_kind_byte() {
 
 #[test]
 fn event_encodes_as_fixarray_of_5() {
-    // to_msgpack uses positional (compact) encoding: a 5-field struct is a
-    // fixarray with marker 0x90 | 5 == 0x95.
+
+
     let e = Event::new(EventKind::Line, 0, 0, 0, 0);
     let bytes = to_msgpack(&e).unwrap();
     assert_eq!(bytes[0], 0x95);
@@ -105,9 +99,6 @@ fn event_rt_many_tstamps() {
     }
 }
 
-// ------------------------------------------------------------------
-// CodeInfo round-trips + tolerance.
-// ------------------------------------------------------------------
 
 #[test]
 fn codeinfo_rt_basic() {
@@ -162,17 +153,17 @@ fn codeinfo_encodes_as_fixarray_of_3() {
 
 #[test]
 fn codeinfo_tolerates_extra_named_field() {
-    // A future writer emits a named map with an extra field; today's reader
-    // still decodes it (mirrors the header tolerance test).
-    let mut bytes = vec![0x84]; // fixmap, 4 entries
+
+
+    let mut bytes = vec![0x84];
     bytes.extend(mp_str("file"));
     bytes.extend(mp_str("a.py"));
     bytes.extend(mp_str("qualname"));
     bytes.extend(mp_str("run"));
     bytes.extend(mp_str("first_line"));
-    bytes.push(0x07); // positive fixint 7
+    bytes.push(0x07);
     bytes.extend(mp_str("some_future_field"));
-    bytes.push(0xC3); // true
+    bytes.push(0xC3);
     let c: CodeInfo = from_msgpack(&bytes).unwrap();
     assert_eq!(c.file, "a.py");
     assert_eq!(c.qualname, "run");
@@ -181,21 +172,18 @@ fn codeinfo_tolerates_extra_named_field() {
 
 #[test]
 fn codeinfo_decodes_from_named_map_form() {
-    let mut bytes = vec![0x83]; // fixmap, 3 entries
+    let mut bytes = vec![0x83];
     bytes.extend(mp_str("file"));
     bytes.extend(mp_str("m.py"));
     bytes.extend(mp_str("qualname"));
     bytes.extend(mp_str("f"));
     bytes.extend(mp_str("first_line"));
-    bytes.push(0x2A); // 42
+    bytes.push(0x2A);
     let c: CodeInfo = from_msgpack(&bytes).unwrap();
     assert_eq!(c.first_line, 42);
     assert_eq!(c.file, "m.py");
 }
 
-// ------------------------------------------------------------------
-// IndexEntry round-trips.
-// ------------------------------------------------------------------
 
 #[test]
 fn indexentry_rt_basic() {
@@ -256,7 +244,7 @@ fn indexentry_vec_rt() {
 fn indexentry_empty_vec_rt() {
     let v: Vec<IndexEntry> = Vec::new();
     assert_eq!(rt(&v), v);
-    // An empty vec encodes as an empty fixarray (0x90).
+
     assert_eq!(to_msgpack(&v).unwrap(), vec![0x90]);
 }
 
@@ -282,9 +270,6 @@ fn indexentry_large_vec_rt() {
     assert_eq!(rt(&v), v);
 }
 
-// ------------------------------------------------------------------
-// compress / decompress.
-// ------------------------------------------------------------------
 
 #[test]
 fn compress_decompress_empty() {
@@ -341,7 +326,7 @@ fn compress_repeated_pattern_shrinks() {
 
 #[test]
 fn compress_randomish_roundtrips() {
-    // A pseudo-random stream (poor ratio) must still round-trip exactly.
+
     let mut state = 0x1234_5678_9abc_def0u64;
     let data: Vec<u8> = (0..50_000)
         .map(|_| {
@@ -387,7 +372,7 @@ fn decompress_rejects_all_ff() {
 #[test]
 fn decompress_rejects_truncated_frame() {
     let c = compress(b"some reasonably long payload to compress into a frame").unwrap();
-    // Chop the frame in half; the decoder must not succeed with the full data.
+
     let truncated = &c[..c.len() / 2];
     match decompress(truncated) {
         Ok(out) => assert_ne!(out.as_slice(), b"some reasonably long payload to compress into a frame"),
@@ -397,7 +382,7 @@ fn decompress_rejects_truncated_frame() {
 
 #[test]
 fn compress_then_manual_decompress_roundtrip() {
-    // "Hand-built minimal input": the smallest thing we produce, decoded back.
+
     let c = compress(b"x").unwrap();
     assert!(!c.is_empty());
     assert_eq!(decompress(&c).unwrap(), b"x");
@@ -412,7 +397,7 @@ fn compress_roundtrip_binary_with_nuls() {
 
 #[test]
 fn compress_roundtrip_msgpack_of_events() {
-    // The realistic case: compress an encoded block payload, get it back.
+
     let events: Vec<Event> = (0..2000)
         .map(|i| Event::new(EventKind::Line, 0, i, 1, i as u64))
         .collect();

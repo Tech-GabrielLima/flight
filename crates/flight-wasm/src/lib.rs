@@ -1,21 +1,8 @@
-//! The `.flight` reader, compiled to WebAssembly (Phase 9).
-//!
-//! This is the growth loop from the VISION: a `.flight` is shareable, so make it
-//! openable with *no install* — drag it onto a web page and read the black box
-//! in the browser. The parsing is the real Rust `flight-reader` (with the
-//! pure-Rust `ruzstd` decoder so it targets `wasm32`), exposed through a tiny
-//! raw C ABI so the page needs nothing but the standard `WebAssembly` API — no
-//! wasm-bindgen, no bundler, no runtime.
-//!
-//! ABI: JS calls [`alloc`] to get a buffer, copies the file bytes in, calls
-//! [`parse`] which returns a pointer to `[u32 little-endian json_len][json…]`,
-//! reads that UTF-8 JSON, then frees both buffers with [`dealloc`]/[`free`].
-
 use flight_format::BlockType;
 use flight_reader::FlightFile;
 use serde_json::{json, Value};
 
-/// Allocate `len` bytes in the wasm linear memory and return the pointer.
+
 #[no_mangle]
 pub extern "C" fn alloc(len: usize) -> *mut u8 {
     let mut buf = vec![0u8; len];
@@ -24,10 +11,7 @@ pub extern "C" fn alloc(len: usize) -> *mut u8 {
     ptr
 }
 
-/// Free a buffer previously handed out by [`alloc`] (same `len`).
-///
-/// # Safety
-/// `ptr`/`len` must come from a prior [`alloc`] call.
+
 #[no_mangle]
 pub unsafe extern "C" fn dealloc(ptr: *mut u8, len: usize) {
     if !ptr.is_null() && len != 0 {
@@ -35,21 +19,13 @@ pub unsafe extern "C" fn dealloc(ptr: *mut u8, len: usize) {
     }
 }
 
-/// Free a result buffer returned by [`parse`] (its total length is `4 + json`).
-///
-/// # Safety
-/// `ptr`/`len` must be exactly what [`parse`] returned.
+
 #[no_mangle]
 pub unsafe extern "C" fn free(ptr: *mut u8, len: usize) {
     dealloc(ptr, len)
 }
 
-/// Parse the `.flight` bytes at `ptr[..len]` and return a pointer to a length-
-/// prefixed JSON summary: 4 bytes little-endian length, then that many UTF-8
-/// bytes. Never traps — a parse error becomes an `{ "error": … }` document.
-///
-/// # Safety
-/// `ptr`/`len` must describe a buffer from [`alloc`] holding the file bytes.
+
 #[no_mangle]
 pub unsafe extern "C" fn parse(ptr: *const u8, len: usize) -> *mut u8 {
     let bytes = if ptr.is_null() { &[][..] } else { std::slice::from_raw_parts(ptr, len) };

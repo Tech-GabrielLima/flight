@@ -1,29 +1,3 @@
-"""Web middleware — a `.flight` per HTTP 500 (Phase 9).
-
-The unhandled exception that returns a 500 is exactly the case a black box is
-for, and a web server is exactly where you can't reproduce it: the request is
-gone, the session is gone, the load is gone. This middleware records every
-request under Flight and, when one raises, writes a full-detail `.flight` for it
-— frames, locals, object graph, the request handler's state — before the
-exception propagates to the framework's error handling.
-
-It is **framework-agnostic** because it speaks the two protocols every Python
-web stack is built on, not any one framework's API:
-
-* :class:`FlightWSGI` wraps a **WSGI** app (Flask, Django, Pyramid, Bottle…).
-* :class:`FlightASGI` wraps an **ASGI** app (FastAPI, Starlette, Quart,
-  Django-async…).
-
-If the incoming request carries a W3C ``traceparent`` (from an upstream service
-or a tracing sidecar), the black box is stamped with that trace context, so a
-500 in this service links straight back to the caller's flight (Phase 8's
-cross-service graph). The trace context is passed *into* the capture rather than
-set globally, so concurrent requests never clobber each other's correlation.
-
-Obeys P1: a failure inside the middleware never changes the response — the
-worst case is simply "no black box for this request", never a second error.
-"""
-
 from __future__ import annotations
 
 import time
@@ -59,10 +33,9 @@ def _context_from_traceparent(traceparent: Optional[str], service: Optional[str]
 
 
 def _capture_request(
-    output_dir: Path, method: str, path: str, traceparent: Optional[str], service: Optional[str]
+    output_dir: Path, method: str, path: str, traceparent: Optional[str], service: Optional[str],
+    report_to_url: Optional[str] = None,
 ) -> Optional[Path]:
-    """Capture the exception currently being handled, tagged with the request's
-    trace context. Best-effort — returns the path or ``None`` (never raises)."""
     try:
         import flight
         from ._capture import capture as _capture
@@ -72,26 +45,24 @@ def _capture_request(
         config = _active.config if _active is not None else Config()
         dest = output_dir / _flight_name(method, path)
         ctx = _context_from_traceparent(traceparent, service)
-        return _capture(config, str(dest), correlation=ctx)
+        written = _capture(config, str(dest), correlation=ctx)
+        if written is not None and report_to_url:
+            from ._fleet import report_to
+
+            report_to(report_to_url, written, strict=True)
+        return written
     except Exception:
         return None
 
 
-# -- WSGI -------------------------------------------------------------------
-
-
 class FlightWSGI:
-    """WSGI middleware writing a `.flight` for any request that raises.
 
-    Wrap your app once::
-
-        app = FlightWSGI(app, output_dir="artifacts/flight", service="checkout")
-    """
-
-    def __init__(self, app, *, output_dir="./.flight", service: Optional[str] = None, install: bool = True):
+    def __init__(self, app, *, output_dir="./.flight", service: Optional[str] = None,
+                 install: bool = True, report_to: Optional[str] = None):
         self.app = app
         self.output_dir = Path(output_dir)
         self.service = service
+        self.report_to = report_to
         try:
             self.output_dir.mkdir(parents=True, exist_ok=True)
         except Exception:
@@ -104,21 +75,19 @@ class FlightWSGI:
         traceparent = environ.get("HTTP_TRACEPARENT")
 
         def _capture():
-            return _capture_request(self.output_dir, method, path, traceparent, self.service)
+            return _capture_request(
+                self.output_dir, method, path, traceparent, self.service, self.report_to
+            )
 
         try:
             result = self.app(environ, start_response)
         except Exception:
             _capture()
             raise
-        # The body may also raise while being *iterated* (streaming views,
-        # generators). Wrap it so those errors get a black box too.
         return _IterGuard(result, _capture)
 
 
 class _IterGuard:
-    """Wrap a WSGI response iterable, capturing on an error during iteration and
-    forwarding ``close()`` so the server's resource handling is preserved."""
 
     def __init__(self, inner, on_error):
         self._inner = iter(inner)
@@ -143,21 +112,14 @@ class _IterGuard:
             closer()
 
 
-# -- ASGI -------------------------------------------------------------------
-
-
 class FlightASGI:
-    """ASGI middleware writing a `.flight` for any HTTP request that raises.
 
-    Wrap your app once::
-
-        app = FlightASGI(app, output_dir="artifacts/flight", service="checkout")
-    """
-
-    def __init__(self, app, *, output_dir="./.flight", service: Optional[str] = None, install: bool = True):
+    def __init__(self, app, *, output_dir="./.flight", service: Optional[str] = None,
+                 install: bool = True, report_to: Optional[str] = None):
         self.app = app
         self.output_dir = Path(output_dir)
         self.service = service
+        self.report_to = report_to
         try:
             self.output_dir.mkdir(parents=True, exist_ok=True)
         except Exception:
@@ -166,7 +128,6 @@ class FlightASGI:
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http":
-            # Lifespan, websocket, etc. — pass through untouched.
             await self.app(scope, receive, send)
             return
         method = scope.get("method", "GET")
@@ -175,7 +136,9 @@ class FlightASGI:
         try:
             await self.app(scope, receive, send)
         except Exception:
-            _capture_request(self.output_dir, method, path, traceparent, self.service)
+            _capture_request(
+                self.output_dir, method, path, traceparent, self.service, self.report_to
+            )
             raise
 
 

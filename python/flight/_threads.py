@@ -1,29 +1,3 @@
-"""Phase 4b — deterministic replay of thread scheduling.
-
-Under the GIL, Python bytecode is already serialized; what still varies run to
-run is **the order in which threads acquire shared locks** — and that order is
-exactly what turns a lock-protected data structure's *contents* non-deterministic
-(which thread appended first, which writer won the race). A program is a
-deterministic function of its inputs *and the order the scheduler granted those
-locks*. So we record that order and, on replay, **enforce it**: each thread waits
-for its recorded turn before a lock acquisition proceeds.
-
-**Model.** Threads are numbered in start order (`_flight_channel`, stamped on the
-Thread; the scope's own thread is channel 0), so each thread replays its own
-boundary calls on its own tape lane (see `_nondet._current_channel`). Blocking
-`threading.Lock`/`RLock` acquisitions made through the module factories inside
-the scope are logged as a global sequence of channel ids; on replay a thread
-blocks until the head of that sequence is its channel, then acquires the real
-lock and advances the sequence. Only *blocking, untimed* acquisitions are gated
-(the `with lock:` case); non-blocking / timed tries pass through untouched.
-
-**Honest scope.** This reproduces the *lock-acquisition schedule* — the cause of
-the classic flaky "which thread won" bug. It does **not** capture data races on
-unlocked shared state (genuinely outside any lock-based record/replay), and only
-locks created *inside* the scope via the factories are tracked. A safety timeout
-turns a replay deadlock into a `ReplayDivergence` instead of a hang (P1).
-"""
-
 from __future__ import annotations
 
 import json
@@ -33,14 +7,8 @@ import threading
 from ._nondet import ReplayDivergence, _current_channel
 
 _ORDER_SOURCE = "threads.order"
-#: Seconds a replaying thread waits for its turn before declaring divergence.
 _TURN_TIMEOUT = 10.0
 
-#: Locks created *by these modules* are left untouched — they are the runtime's
-#: own machinery (threading's Condition/Event/Thread bootstrap use module-level
-#: `Lock`/`RLock`, and must keep their full private API and never be gated, or
-#: the interpreter's own synchronization would deadlock on replay). We track
-#: only locks the user's code creates.
 _INTERNAL_LOCK_MODULES = frozenset(
     {
         "threading", "_thread", "asyncio", "concurrent", "queue", "logging",
@@ -52,7 +20,7 @@ _INTERNAL_LOCK_MODULES = frozenset(
 
 class _Channels:
     def __init__(self):
-        self._n = 1  # channel 0 is reserved for the scope's own thread
+        self._n = 1
         self._lock = threading.Lock()
 
     def assign(self, thread) -> int:
@@ -64,7 +32,6 @@ class _Channels:
 
 
 class _ThreadBase:
-    """Shared install/uninstall: number threads and wrap the lock factories."""
 
     def __init__(self):
         self._chan = _Channels()
@@ -72,19 +39,18 @@ class _ThreadBase:
         self._orig_start = None
 
     def install(self) -> None:
-        # The thread entering the scope is channel 0; started threads get 1, 2…
         threading.current_thread()._flight_channel = 0
         self._orig_start = threading.Thread.start
         chan, orig = self._chan, self._orig_start
 
         def start(thread_self):
-            chan.assign(thread_self)  # numbered in start order (deterministic)
+            chan.assign(thread_self)
             return orig(thread_self)
 
         threading.Thread.start = start
         self._install_locks()
 
-    def _install_locks(self) -> None:  # pragma: no cover - overridden
+    def _install_locks(self) -> None:
         raise NotImplementedError
 
     def _wrap_factory(self, attr: str, make_proxy) -> None:
@@ -94,13 +60,10 @@ class _ThreadBase:
             real = orig(*args, **kwargs)
             try:
                 caller = sys._getframe(1).f_globals.get("__name__", "")
-            except Exception:  # pragma: no cover - defensive: a lock factory is
-                # always called from a live Python frame with an f_globals dict,
-                # so this guard (which keeps lock creation from ever crashing the
-                # user's program, P1) is not reachable deterministically.
+            except Exception:
                 caller = ""
             if caller.split(".", 1)[0] in _INTERNAL_LOCK_MODULES:
-                return real  # runtime machinery — leave it fully intact
+                return real
             return make_proxy(real)
 
         setattr(threading, attr, factory)
@@ -119,12 +82,7 @@ class _ThreadBase:
 
 
 def _gated(blocking, timeout) -> bool:
-    """Only plain `with lock:` style acquisitions are ordered: blocking, untimed.
-    Non-blocking or timed tries are passed through (and never recorded)."""
     return bool(blocking) and timeout in (-1, None)
-
-
-# -- record -----------------------------------------------------------------
 
 
 class _RecLock:
@@ -144,7 +102,7 @@ class _RecLock:
     def locked(self):
         return self._real.locked()
 
-    def __getattr__(self, name):  # delegate the private lock API (Condition etc.)
+    def __getattr__(self, name):
         return getattr(object.__getattribute__(self, "_real"), name)
 
     def __enter__(self):
@@ -175,9 +133,6 @@ class ThreadRecorder(_ThreadBase):
     def finalize(self) -> None:
         if self._order:
             self._rec.record_raw(_ORDER_SOURCE, "s", json.dumps(self._order))
-
-
-# -- replay -----------------------------------------------------------------
 
 
 class _ReplayLock:

@@ -3,8 +3,8 @@ requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "flight-recorder"
-version = "0.0.1"
+name = "pyflight"
+version = "0.0.2"
 description = "A flight recorder for Python: when a program dies, get the black box, not just a traceback."
 readme = "README.md"
 license = { text = "MIT" }
@@ -22,7 +22,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/gabriellima/flight"
+Homepage = "https://github.com/Tech-GabrielLima/flight"
 
 [project.scripts]
 flight = "flight._cli:main"
@@ -39,4 +39,6 @@ dev = ["pytest>=7", "textual>=0.60", "cryptography>=41", "coverage>=7"]
 manifest-path = "crates/flight-core/Cargo.toml"
 python-source = "python"
 module-name = "flight._core"
-features = ["pyo3/extension-module"]
+# abi3-py312: build against CPython's stable ABI so a single wheel per platform
+# works on 3.12, 3.13, 3.14+ — no per-minor-version rebuild, smaller wheel matrix.
+features = ["pyo3/extension-module", "pyo3/abi3-py312"]

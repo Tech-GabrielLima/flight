@@ -1,0 +1,88 @@
+name: Release wheels
+
+# Build binary wheels for every major platform and publish them to PyPI, so that
+# `pip install pyflight` works for anyone — no Rust toolchain required.
+#
+# The extension is built against CPython's stable ABI (abi3-py312, set in
+# pyproject.toml), so a single wheel per platform/arch covers Python 3.12, 3.13
+# and every later 3.x — no per-minor-version matrix.
+#
+# Publishing uses PyPI Trusted Publishing (OIDC): no API token is stored. One
+# one-time setup on PyPI is required — see README "Publishing a release".
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  wheels:
+    name: wheel · ${{ matrix.platform.runner }} · ${{ matrix.platform.target }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { runner: ubuntu-latest,   target: x86_64,  manylinux: auto }
+          - { runner: ubuntu-latest,   target: aarch64, manylinux: auto }
+          - { runner: macos-13,        target: x86_64 }
+          - { runner: macos-14,        target: aarch64 }
+          - { runner: windows-latest,  target: x64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          manylinux: ${{ matrix.platform.manylinux }}
+          args: --release --out dist
+          sccache: "true"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform.runner }}-${{ matrix.platform.target }}
+          path: dist/*.whl
+
+  sdist:
+    name: source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  publish:
+    name: Publish to PyPI
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+    # Only publish on a version tag; workflow_dispatch runs are build-only (a dry run).
+    if: startsWith(github.ref, 'refs/tags/')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pyflight
+    permissions:
+      id-token: write # OIDC token for PyPI Trusted Publishing — no stored secret
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          # Don't fail if a file for this version is already on PyPI (e.g. a
+          # Linux wheel + sdist published earlier) — just add the missing ones.
+          skip-existing: true

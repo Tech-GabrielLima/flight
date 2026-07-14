@@ -1,6 +1,3 @@
-//! Byte-exact tests of `FlightWriter`: header layout, block framing, offset
-//! accounting, and the `finish()` footer (INDEX block + trailer).
-
 use flight_format::{
     compress, decompress, from_msgpack, to_msgpack, BlockType, FlightWriter, HeaderMeta, IndexEntry,
     MetaBlock, BLOCK_HEADER_LEN, FORMAT_VERSION, HEADER_FIXED_LEN, MAGIC, TRAILER_LEN, TRAILER_MAGIC,
@@ -14,13 +11,12 @@ fn meta() -> HeaderMeta {
     }
 }
 
-// Length of the header in a produced buffer: fixed part + declared meta len.
+
 fn header_len(buf: &[u8]) -> usize {
     HEADER_FIXED_LEN + u32::from_le_bytes([buf[6], buf[7], buf[8], buf[9]]) as usize
 }
 
-// Parse the (type, payload) of a block whose header starts at `off`.
-// Returns (block_type, payload_slice, next_off).
+
 fn read_block(buf: &[u8], off: usize) -> (u8, &[u8], usize) {
     let ty = buf[off];
     let len = u32::from_le_bytes([buf[off + 1], buf[off + 2], buf[off + 3], buf[off + 4]]) as usize;
@@ -28,9 +24,6 @@ fn read_block(buf: &[u8], off: usize) -> (u8, &[u8], usize) {
     (ty, &buf[start..start + len], start + len)
 }
 
-// ------------------------------------------------------------------
-// Header layout.
-// ------------------------------------------------------------------
 
 #[test]
 fn header_starts_with_magic() {
@@ -68,7 +61,7 @@ fn header_meta_decodes_back() {
 
 #[test]
 fn header_is_named_map_marker() {
-    // Header meta is written as a named msgpack map (3 fields => fixmap 0x83).
+
     let mut buf = Vec::new();
     let _ = FlightWriter::new(&mut buf, &meta()).unwrap();
     assert_eq!(buf[HEADER_FIXED_LEN], 0x83);
@@ -79,7 +72,7 @@ fn empty_file_is_header_only() {
     let mut buf = Vec::new();
     let w = FlightWriter::new(&mut buf, &meta()).unwrap();
     drop(w);
-    // No blocks written: buffer is exactly the header.
+
     assert_eq!(buf.len(), header_len(&buf));
 }
 
@@ -89,13 +82,10 @@ fn header_meta_varies_with_content() {
     let _ = FlightWriter::new(&mut a, &HeaderMeta::new("0.0.1")).unwrap();
     let mut b = Vec::new();
     let _ = FlightWriter::new(&mut b, &HeaderMeta::new("999.999.999")).unwrap();
-    // Longer version string => longer meta => longer header.
+
     assert!(b.len() > a.len());
 }
 
-// ------------------------------------------------------------------
-// Block framing (write_block_msgpack — fully reconstructable via public compress).
-// ------------------------------------------------------------------
 
 #[test]
 fn write_block_msgpack_exact_framing() {
@@ -107,14 +97,14 @@ fn write_block_msgpack_exact_framing() {
 
     let hl = header_len(&buf);
     let expected_payload = compress(&raw).unwrap();
-    // type byte
+
     assert_eq!(buf[hl], 0x06);
-    // payload len LE
+
     let len = u32::from_le_bytes([buf[hl + 1], buf[hl + 2], buf[hl + 3], buf[hl + 4]]) as usize;
     assert_eq!(len, expected_payload.len());
-    // payload bytes exactly the zstd frame of the msgpack
+
     assert_eq!(&buf[hl + 5..hl + 5 + len], expected_payload.as_slice());
-    // whole buffer is header + one framed block
+
     assert_eq!(buf.len(), hl + BLOCK_HEADER_LEN + expected_payload.len());
 }
 
@@ -143,7 +133,7 @@ fn write_block_msgpack_payload_is_compressed_msgpack() {
 fn write_block_msgpack_accepts_unknown_type_byte() {
     let mut buf = Vec::new();
     let mut w = FlightWriter::new(&mut buf, &meta()).unwrap();
-    // 0x42 is not a known BlockType; the writer stores it raw anyway.
+
     w.write_block_msgpack(0x42, &[0x90]).unwrap();
     drop(w);
     let hl = header_len(&buf);
@@ -168,7 +158,7 @@ fn write_block_positional_roundtrips() {
     let (ty, payload, _) = read_block(&buf, hl);
     assert_eq!(ty, BlockType::Meta as u8);
     let raw = decompress(payload).unwrap();
-    // Positional => fixarray marker.
+
     assert_eq!(raw[0], 0x95);
     let back: MetaBlock = from_msgpack(&raw).unwrap();
     assert_eq!(back, m);
@@ -191,15 +181,12 @@ fn write_block_named_roundtrips_and_is_map() {
     let (ty, payload, _) = read_block(&buf, hl);
     assert_eq!(ty, BlockType::Meta as u8);
     let raw = decompress(payload).unwrap();
-    // Named => fixmap marker (5 fields => 0x85).
+
     assert_eq!(raw[0], 0x85);
     let back: MetaBlock = from_msgpack(&raw).unwrap();
     assert_eq!(back, m);
 }
 
-// ------------------------------------------------------------------
-// Multiple blocks + offset accounting.
-// ------------------------------------------------------------------
 
 #[test]
 fn multiple_blocks_are_framed_in_order() {
@@ -227,8 +214,7 @@ fn offset_accounting_matches_finish_index() {
     }
     let _ = w.finish().unwrap();
 
-    // Decode index and confirm each entry's offset points at its header, and
-    // the length field at that offset matches payload_len.
+
     let entries = decode_index(&buf);
     for e in &entries {
         let off = e.offset as usize;
@@ -238,11 +224,7 @@ fn offset_accounting_matches_finish_index() {
     }
 }
 
-// ------------------------------------------------------------------
-// finish(): INDEX block + trailer.
-// ------------------------------------------------------------------
 
-// Decode the INDEX block that `finish()` wrote, using the trailer to locate it.
 fn decode_index(buf: &[u8]) -> Vec<IndexEntry> {
     let n = buf.len();
     assert_eq!(&buf[n - 4..], TRAILER_MAGIC);
@@ -293,8 +275,8 @@ fn finish_index_contains_all_prior_blocks_not_itself() {
     let _ = w.finish().unwrap();
 
     let entries = decode_index(&buf);
-    // The index is serialized before its own block is framed, so it lists the
-    // 3 prior blocks and NOT the INDEX block itself.
+
+
     assert_eq!(entries.len(), 3);
     assert_eq!(entries[0].block_type, 0x01);
     assert_eq!(entries[1].block_type, 0x06);
@@ -314,7 +296,7 @@ fn finish_index_does_not_reference_itself() {
     let index_total_len =
         u32::from_le_bytes([buf[n - 8], buf[n - 7], buf[n - 6], buf[n - 5]]) as usize;
     let index_start = (n - TRAILER_LEN - index_total_len) as u64;
-    // Every listed block starts strictly before the INDEX block.
+
     for e in &entries {
         assert!(e.offset < index_start);
     }
@@ -332,9 +314,8 @@ fn finish_first_entry_offset_is_header_len() {
 
 #[test]
 fn finish_empty_file_index_is_empty() {
-    // The index lists the *content* blocks written before it; it does not list
-    // itself (finish() serializes the index before pushing the index block's
-    // own entry). An empty file therefore has a zero-entry index.
+
+
     let mut buf = Vec::new();
     let w = FlightWriter::new(&mut buf, &meta()).unwrap();
     let _ = w.finish().unwrap();
@@ -352,7 +333,7 @@ fn finish_index_total_len_covers_the_index_block() {
     let index_total_len =
         u32::from_le_bytes([buf[n - 8], buf[n - 7], buf[n - 6], buf[n - 5]]) as usize;
     let index_start = n - TRAILER_LEN - index_total_len;
-    // The index block's own framed length equals index_total_len.
+
     let payload_len = u32::from_le_bytes([
         buf[index_start + 1],
         buf[index_start + 2],
@@ -389,7 +370,7 @@ fn many_blocks_stress_index_count() {
     }
     let _ = w.finish().unwrap();
     let entries = decode_index(&buf);
-    assert_eq!(entries.len(), 200); // the 200 content blocks; the index omits itself
+    assert_eq!(entries.len(), 200);
 }
 
 #[test]
@@ -406,9 +387,6 @@ fn finish_index_offsets_are_strictly_increasing() {
     }
 }
 
-// ------------------------------------------------------------------
-// create() on disk.
-// ------------------------------------------------------------------
 
 #[test]
 fn create_writes_readable_file_on_disk() {
@@ -427,7 +405,7 @@ fn create_writes_readable_file_on_disk() {
     assert_eq!(&bytes[0..4], MAGIC);
     assert_eq!(&bytes[bytes.len() - 4..], TRAILER_MAGIC);
     let entries = decode_index(&bytes);
-    // Only the META content block is indexed (the index does not list itself).
+
     assert_eq!(entries.len(), 1);
     assert_eq!(entries.last().unwrap().block_type, BlockType::Meta as u8);
 }
@@ -436,7 +414,7 @@ fn create_writes_readable_file_on_disk() {
 fn writer_returns_underlying_on_finish() {
     let buf = Vec::new();
     let w = FlightWriter::new(buf, &meta()).unwrap();
-    let out = w.finish().unwrap(); // returns the Vec back
+    let out = w.finish().unwrap();
     assert_eq!(&out[0..4], MAGIC);
     assert_eq!(&out[out.len() - 4..], TRAILER_MAGIC);
 }

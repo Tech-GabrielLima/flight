@@ -28,3 +28,6 @@ dist/
 .coverage
 .coverage.*
 htmlcov/
+
+# Article series (separate deliverable; keep out of the package repo)
+articles/

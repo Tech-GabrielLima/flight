@@ -7,15 +7,7 @@ use crate::error::FormatError;
 use crate::header::HeaderMeta;
 use crate::{FORMAT_VERSION, MAGIC, TRAILER_MAGIC};
 
-/// Streaming, append-only writer of `.flight` files.
-///
-/// Every byte is written forward; the file on disk is valid (readable, maybe
-/// `partial`) after *any* prefix of writes — the process may die at any
-/// moment and rule 1 of the format still holds. Calling [`finish`] appends
-/// the INDEX block and the trailer, marking a clean close; not calling it is
-/// allowed and simply produces a footer-less file.
-///
-/// [`finish`]: FlightWriter::finish
+
 pub struct FlightWriter<W: Write> {
     w: W,
     offset: u64,
@@ -23,7 +15,7 @@ pub struct FlightWriter<W: Write> {
 }
 
 impl FlightWriter<BufWriter<File>> {
-    /// Create a `.flight` file at `path` and write its header.
+
     pub fn create(path: &Path, meta: &HeaderMeta) -> Result<Self, FormatError> {
         let file = File::create(path)?;
         FlightWriter::new(BufWriter::new(file), meta)
@@ -31,10 +23,10 @@ impl FlightWriter<BufWriter<File>> {
 }
 
 impl<W: Write> FlightWriter<W> {
-    /// Wrap `w` and immediately write the file header.
+
     pub fn new(mut w: W, meta: &HeaderMeta) -> Result<Self, FormatError> {
-        // Header meta is a named msgpack map, uncompressed: sniffable and
-        // tolerant to new fields.
+
+
         let meta_bytes =
             rmp_serde::to_vec_named(meta).map_err(|e| FormatError::Encode(e.to_string()))?;
         w.write_all(MAGIC)?;
@@ -49,8 +41,7 @@ impl<W: Write> FlightWriter<W> {
         })
     }
 
-    /// Write one block whose payload serializes as a compact positional
-    /// msgpack array. Use for high-volume data (events, objects).
+
     pub fn write_block<T: serde::Serialize>(
         &mut self,
         ty: BlockType,
@@ -60,8 +51,7 @@ impl<W: Write> FlightWriter<W> {
         self.write_block_msgpack(ty as u8, &bytes)
     }
 
-    /// Write one block whose payload serializes as a named msgpack map.
-    /// Use for metadata-ish payloads that must tolerate growing new fields.
+
     pub fn write_block_named<T: serde::Serialize>(
         &mut self,
         ty: BlockType,
@@ -72,8 +62,7 @@ impl<W: Write> FlightWriter<W> {
         self.write_block_msgpack(ty as u8, &bytes)
     }
 
-    /// Write one block from already-encoded msgpack bytes. `ty` is raw so
-    /// tests (and future tools) can emit types this crate does not know.
+
     pub fn write_block_msgpack(&mut self, ty: u8, msgpack: &[u8]) -> Result<(), FormatError> {
         let compressed = crate::compress(msgpack)?;
         self.index.push(IndexEntry {
@@ -88,20 +77,18 @@ impl<W: Write> FlightWriter<W> {
         Ok(())
     }
 
-    /// Flush buffered bytes to the underlying writer (the file stays valid,
-    /// footer-less, if the process dies right after).
+
     pub fn flush(&mut self) -> Result<(), FormatError> {
         self.w.flush()?;
         Ok(())
     }
 
-    /// Clean close: append the INDEX block and the fixed-size trailer, then
-    /// flush. Consumes the writer.
+
     pub fn finish(mut self) -> Result<W, FormatError> {
         let index_bytes = crate::to_msgpack(&self.index)?;
         let index_start = self.offset;
-        // The index is itself a regular block (a scanning reader just sees
-        // one more block); the trailer lets a seeking reader jump to it.
+
+
         self.write_block_msgpack(BlockType::Index as u8, &index_bytes)?;
         let index_total_len = (self.offset - index_start) as u32;
         self.w.write_all(&index_total_len.to_le_bytes())?;
@@ -146,7 +133,7 @@ mod tests {
         let n = buf.len();
         let index_total_len =
             u32::from_le_bytes([buf[n - 8], buf[n - 7], buf[n - 6], buf[n - 5]]) as usize;
-        // Trailer points exactly at the start of the INDEX block.
+
         let index_start = n - crate::TRAILER_LEN - index_total_len;
         assert_eq!(buf[index_start], BlockType::Index as u8);
     }
@@ -159,7 +146,7 @@ mod tests {
         w.write_block_named(BlockType::Meta, &MetaBlock::default())
             .unwrap();
         w.flush().unwrap();
-        drop(w); // process "dies" here
+        drop(w);
         assert_ne!(&buf[buf.len() - 4..], TRAILER_MAGIC);
     }
 }

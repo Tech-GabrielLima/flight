@@ -4,35 +4,31 @@ use serde::{Deserialize, Serialize};
 
 use crate::event::{CodeInfo, Event};
 
-/// Block types of format v1.
-///
-/// The numeric ids are part of the on-disk format — never renumber. Ids for
-/// future phases are reserved *now* (P3: the format is the spine; the viewer
-/// of phase 1.5 must gain phase-2 powers without a rewrite).
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum BlockType {
-    /// Environment: python version, platform, argv, cwd… (phase 0+)
+
     Meta = 0x01,
-    /// Source code of the files involved in a crash. (phase 1)
+
     Source = 0x02,
-    /// Exception chain: type, message, `__cause__`/`__context__`. (phase 1)
+
     Exception = 0x03,
-    /// One stack frame: function, file, line, refs to locals. (phase 1)
+
     Frame = 0x04,
-    /// Serialized object graph. (phase 1)
+
     Object = 0x05,
-    /// The last N execution events before death. (phase 0+)
+
     EventRing = 0x06,
-    /// One state write: who, what, new value, where, when. (phase 2)
+
     Mutation = 0x07,
-    /// Checkpoints for efficient time navigation. (phase 2)
+
     Timeline = 0x08,
-    /// Recorded sources of non-determinism. (phase 3)
+
     Nondet = 0x09,
-    /// Footer: index of all previous blocks, written on clean close only.
+
     Index = 0x70,
-    /// Extension space. Readers that don't know it: skip.
+
     Ext = 0x7F,
 }
 
@@ -71,10 +67,7 @@ impl BlockType {
     }
 }
 
-/// Payload of a META block: the environment of the recorded process.
-///
-/// Serialized as a msgpack map (named fields) — this block is pure metadata
-/// and must tolerate growing new fields between versions.
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct MetaBlock {
     pub python_version: String,
@@ -84,28 +77,26 @@ pub struct MetaBlock {
     pub flight_version: String,
 }
 
-/// Payload of an EVENT_RING block: the drained ring buffers of every thread,
-/// merged and sorted by logical timestamp, plus the code map needed to
-/// resolve `code_id`s into file/qualname.
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct RingPayload {
-    /// `code_id -> CodeInfo` for every code object seen in `events`.
+
     pub codes: HashMap<u64, CodeInfo>,
-    /// Events oldest-first (ascending `tstamp`).
+
     pub events: Vec<Event>,
-    /// True if any per-thread ring wrapped around, i.e. older events were
-    /// overwritten and `events` is only the tail of the story.
+
+
     pub wrapped: bool,
 }
 
-/// One entry of the INDEX (footer) block.
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexEntry {
-    /// Raw block type byte (kept raw so unknown types survive the index).
+
     pub block_type: u8,
-    /// Absolute file offset of the block header.
+
     pub offset: u64,
-    /// Compressed payload length in bytes.
+
     pub payload_len: u32,
 }
 

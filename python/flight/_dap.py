@@ -1,21 +1,3 @@
-"""Phase 5 — a Debug Adapter Protocol (DAP) server over the time-travel engine.
-
-DAP is what VS Code and PyCharm speak to a debugger. It has *built-in* support
-for reverse execution — a client that sees the ``supportsStepBack`` capability
-shows "Step Back" and "Reverse" buttons and sends ``stepBack`` /
-``reverseContinue`` requests. So exposing :mod:`flight._timetravel` over DAP hands
-flight a real reverse-debugging UI in those editors for free, with the recorded
-locals, the mutation timeline and the "breakpoint in the past" all navigable.
-
-The adapter is a **read-only** debugger over a `.flight` scope recording: there
-is no live process, `continue`/`stepBack`/`reverseContinue` walk the recorded
-timeline, `variables` reconstructs the state at the cursor, and `evaluate` is a
-small REPL (``find running > 100`` jumps to the write that matched — the
-breakpoint in the past). :meth:`DebugAdapter.handle` is pure (request dict →
-list of message dicts), so the protocol is unit-tested without an editor or a
-socket; :func:`serve` adds the Content-Length framing over a byte stream.
-"""
-
 from __future__ import annotations
 
 import json
@@ -27,11 +9,10 @@ from ._timetravel import TimeTravel
 THREAD_ID = 1
 LOCALS_REF = 1
 CONTAINERS_REF = 2
-_CONTAINER_BASE = 100  # container #i lives at reference _CONTAINER_BASE + i
+_CONTAINER_BASE = 100
 
 
 class DebugAdapter:
-    """Turns DAP requests into responses + events over a `TimeTravel` engine."""
 
     def __init__(self, tt: Optional[TimeTravel] = None, path: str = ""):
         self._tt = tt
@@ -39,7 +20,6 @@ class DebugAdapter:
         self._seq = 0
         self.running = True
 
-    # -- message helpers ----------------------------------------------------
 
     def _mseq(self) -> int:
         self._seq += 1
@@ -71,7 +51,6 @@ class DebugAdapter:
             {"reason": reason, "threadId": THREAD_ID, "allThreadsStopped": True},
         )
 
-    # -- dispatch -----------------------------------------------------------
 
     def handle(self, req: dict) -> list[dict]:
         command = req.get("command", "")
@@ -80,10 +59,9 @@ class DebugAdapter:
             return [self._response(req, success=False, message=f"unsupported: {command}")]
         try:
             return handler(req)
-        except Exception as e:  # never crash the adapter (P1)
+        except Exception as e:
             return [self._response(req, success=False, message=f"{type(e).__name__}: {e}")]
 
-    # -- lifecycle ----------------------------------------------------------
 
     def _cmd_initialize(self, req: dict) -> list[dict]:
         caps = {
@@ -124,13 +102,11 @@ class DebugAdapter:
 
     _cmd_terminate = _cmd_disconnect
 
-    # -- inspection ---------------------------------------------------------
 
     def _cmd_stackTrace(self, req: dict) -> list[dict]:
         tt = self._tt
         step = tt.current() if tt else None
         if step is None:
-            # Before the first write (or an empty recording): a synthetic frame.
             frame = {
                 "id": 1,
                 "name": "<recording start>",
@@ -187,7 +163,6 @@ class DebugAdapter:
     def _var(name: str, value: str) -> dict:
         return {"name": name, "value": value, "variablesReference": 0}
 
-    # -- navigation ---------------------------------------------------------
 
     def _need_tt(self, req: dict) -> Optional[list[dict]]:
         if self._tt is None:
@@ -231,7 +206,6 @@ class DebugAdapter:
     def _cmd_pause(self, req: dict) -> list[dict]:
         return [self._response(req), self._stopped("pause")]
 
-    # -- breakpoints --------------------------------------------------------
 
     def _cmd_setBreakpoints(self, req: dict) -> list[dict]:
         args = req.get("arguments", {})
@@ -273,7 +247,6 @@ class DebugAdapter:
                 out.append({"verified": True})
         return [self._response(req, {"breakpoints": out})]
 
-    # -- REPL / evaluate ----------------------------------------------------
 
     def _cmd_evaluate(self, req: dict) -> list[dict]:
         args = req.get("arguments", {})
@@ -283,7 +256,7 @@ class DebugAdapter:
         result, moved = self._evaluate(expr)
         msgs = [self._response(req, {"result": result, "variablesReference": 0})]
         if moved:
-            msgs.append(self._stopped("goto"))  # cursor moved: refresh the UI
+            msgs.append(self._stopped("goto"))
         return msgs
 
     def _evaluate(self, expr: str) -> tuple[str, bool]:
@@ -309,20 +282,14 @@ class DebugAdapter:
         if verb == "state":
             locs = tt.state()["locals"]
             return (", ".join(f"{k}={v}" for k, v in sorted(locs.items())) or "<empty>"), False
-        # a bare name: its value at the cursor
         locs = tt.state()["locals"]
         if expr in locs:
             return locs[expr], False
-        # otherwise treat the whole thing as a condition to jump to
         step = tt.find_first(expr)
         return (f"→ {step.describe()}" if step else f"?: {expr}"), bool(step)
 
 
-# -- Content-Length framing (VS Code / DAP transport) -----------------------
-
-
 def read_message(stream) -> Optional[dict]:
-    """Read one DAP message (Content-Length framed) from a binary stream."""
     headers: dict[str, str] = {}
     while True:
         line = stream.readline()
@@ -348,7 +315,6 @@ def write_message(stream, msg: dict) -> None:
 
 
 def serve(instream, outstream, adapter: Optional[DebugAdapter] = None) -> None:
-    """Run a DAP session over two binary streams (stdin/stdout for an editor)."""
     adapter = adapter or DebugAdapter()
     while adapter.running:
         req = read_message(instream)

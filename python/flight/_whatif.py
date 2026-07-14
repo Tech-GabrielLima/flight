@@ -1,37 +1,3 @@
-"""What-if debugging — the moonshot (Phase 10, VISION.md §5.6).
-
-Every earlier phase builds toward a question you normally can't ask of a crash:
-*what if this value had been different?* Because Flight can hold the whole
-recorded world constant (the Phase-3 deterministic tape — time, random, uuid,
-I/O, the schedule) and reconstruct state at any point, it can **re-execute the
-run with one value changed and show you the counterfactual outcome**: "what if
-`numbers` weren't empty here?" — the program keeps going and you see where it
-ends up, with everything *else* exactly as it was recorded.
-
-The mechanism is two faithful replays of the same function over the same tape:
-
-* the **baseline** replay reproduces the recorded outcome (bit-for-bit);
-* the **counterfactual** replay runs with a trace hook that, the moment control
-  reaches a chosen line, overwrites a local variable with your value.
-
-Overwriting a live local is possible without any bytecode surgery on Python
-3.13+, where ``frame.f_locals`` is a write-through proxy (PEP 667): assigning to
-it from a trace callback updates the real fast local the next bytecode reads.
-On older Pythons the override can't take effect and `what_if` says so rather
-than lying.
-
-Three honest outcomes fall out of the counterfactual replay:
-
-* it **returns** (or raises) something different — the counterfactual result;
-* it **diverges** from the tape — the change would take a different path through
-  the recorded world (e.g. it now calls ``random()`` one more time), which is
-  itself a finding: the edit isn't consistent with the recording;
-* it **doesn't reach** the override point — reported, not silently ignored.
-
-Everything obeys P1: a failure in the machinery never escapes as a surprise; the
-counterfactual's *own* exception is captured and reported, not raised at you.
-"""
-
 from __future__ import annotations
 
 import sys
@@ -46,28 +12,20 @@ _PEP667 = sys.version_info >= (3, 13)
 def _safe_repr(value: Any, limit: int = 200) -> str:
     try:
         r = repr(value)
-    except BaseException as e:  # a hostile __repr__
+    except BaseException as e:
         return f"<repr failed: {type(e).__name__}>"
     return r if len(r) <= limit else r[:limit] + "…"
 
 
 @dataclass
 class Override:
-    """Change local ``var`` to ``value`` the ``nth`` time control reaches
-    ``line`` (optionally only inside function ``qualname``).
-
-    The override is applied *just before* ``line`` runs, so target the line that
-    **uses** the value, not the line that assigns it. Requires Python 3.13+
-    (PEP 667 write-through locals)."""
 
     var: str
     value: Any
     line: int
     qualname: Optional[str] = None
     nth: int = 1
-    #: Set after a counterfactual run: whether the override actually fired…
     applied: bool = field(default=False, compare=False)
-    #: …and the value it replaced (repr), for the human diff.
     previous: Optional[str] = field(default=None, compare=False)
 
     def describe(self) -> str:
@@ -78,7 +36,6 @@ class Override:
 
 @dataclass
 class Outcome:
-    """How a run ended: a value, an exception, or a divergence from the tape."""
 
     returned: Any = None
     exception: Optional[BaseException] = None
@@ -89,7 +46,6 @@ class Outcome:
         return self.exception is not None and not self.diverged
 
     def key(self):
-        """A comparable summary of the outcome (for `WhatIf.changed`)."""
         if self.diverged:
             return ("diverged",)
         if self.exception is not None:
@@ -106,7 +62,6 @@ class Outcome:
 
 @dataclass
 class WhatIf:
-    """The result of a what-if: the recorded outcome vs the counterfactual."""
 
     baseline: Outcome
     counterfactual: Outcome
@@ -114,12 +69,10 @@ class WhatIf:
 
     @property
     def changed(self) -> bool:
-        """True if changing the value changed how the run ended."""
         return self.baseline.key() != self.counterfactual.key()
 
     @property
     def unreached(self) -> list[Override]:
-        """Overrides whose line was never hit in the counterfactual run."""
         return [o for o in self.overrides if not o.applied]
 
     def render(self) -> str:
@@ -156,7 +109,7 @@ def _make_tracer(overrides: list[Override]):
                 if counts[key] == ov.nth:
                     try:
                         ov.previous = _safe_repr(frame.f_locals.get(ov.var, "<undefined>"))
-                        frame.f_locals[ov.var] = ov.value  # PEP 667 write-through (3.13+)
+                        frame.f_locals[ov.var] = ov.value
                         ov.applied = True
                     except Exception:
                         pass
@@ -186,31 +139,164 @@ def _run(tape, fn, args, kwargs, tracer) -> Outcome:
         return Outcome(returned=result)
     except ReplayDivergence:
         return Outcome(diverged=True)
-    except BaseException as e:  # the run's own outcome, captured not raised (P1)
+    except BaseException as e:
         return Outcome(exception=e)
 
 
 def what_if(flight_path, fn, overrides, *args, **kwargs) -> WhatIf:
-    """Re-execute `fn` over the deterministic tape in `flight_path`, once as
-    recorded (the baseline) and once with `overrides` applied (the
-    counterfactual), and return both outcomes.
-
-    `overrides` is an :class:`Override` or a list of them. Extra ``*args`` /
-    ``**kwargs`` are passed to `fn`, exactly as :func:`flight.replay`.
-
-        # what if `numbers` weren't empty at line 42?
-        wi = flight.what_if("run.flight", compute,
-                            flight.Override("numbers", [1, 2, 3], line=42))
-        print(wi.render())
-    """
     from ._read import read
 
     if isinstance(overrides, Override):
         overrides = [overrides]
     overrides = list(overrides)
 
-    # A fresh tape per run: replay advances the tape's cursors, so the two runs
-    # must not share one.
     baseline = _run(read(flight_path).tape(), fn, args, kwargs, tracer=None)
     counterfactual = _run(read(flight_path).tape(), fn, args, kwargs, tracer=_make_tracer(overrides))
     return WhatIf(baseline=baseline, counterfactual=counterfactual, overrides=overrides)
+
+
+def run_whatif(flight_path, var, value, line, *, nth=1, qualname=None) -> dict:
+    from ._generalize import load_invocable
+    from ._read import read
+
+    fl = read(flight_path)
+    invoke = load_invocable(fl)
+    if invoke is None:
+        return {"ok": False, "error": "could not resolve the crash function from the recording"}
+    ov = Override(var=var, value=value, line=int(line), qualname=qualname, nth=int(nth))
+    try:
+        wi = what_if(flight_path, invoke, ov)
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    return {
+        "ok": True,
+        "applied": ov.applied,
+        "previous": ov.previous,
+        "changed": wi.changed,
+        "baseline": wi.baseline.describe(),
+        "counterfactual": wi.counterfactual.describe(),
+        "pep667": _PEP667,
+    }
+
+
+def _whatif_page(flight_path) -> str:
+    from ._read import read
+
+    fl = read(flight_path)
+    crash = fl.crash() if fl.has_crash else None
+    frame = crash.frames[0] if (crash and crash.frames) else None
+
+    def esc(s):
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    rows = ""
+    line = frame.lineno if frame else 0
+    if frame:
+        for name, oid in frame.locals:
+            if name.startswith("__") and name.endswith("__"):
+                continue
+            rows += (
+                f"<tr><td><code>{esc(name)}</code></td>"
+                f"<td class=muted>{esc(crash.render(oid))}</td></tr>"
+            )
+    where = f"{frame.qualname} (line {frame.lineno})" if frame else "(no crash frame)"
+    return f"""<!doctype html><meta charset=utf-8><title>flight what-if</title>
+<style>
+  :root{{color-scheme:light dark}}
+  body{{font:14px/1.6 ui-monospace,Menlo,Consolas,monospace;margin:0;padding:24px;
+        max-width:820px;background:Canvas;color:CanvasText}}
+  h1{{font-size:18px}} h2{{font-size:13px;text-transform:uppercase;opacity:.7}}
+  table{{width:100%;border-collapse:collapse}} td{{padding:4px 8px;border-bottom:1px solid #8883}}
+  .muted{{opacity:.7}} code{{background:#8881;padding:1px 4px;border-radius:4px}}
+  input,button{{font:inherit;padding:5px 8px;border-radius:6px;border:1px solid #8886;
+    background:Canvas;color:CanvasText}}
+  #res{{margin-top:16px;padding:12px;border:1px solid #8884;border-radius:8px;white-space:pre-wrap}}
+  .b{{color:#3fb950;font-weight:700}} .a{{color:#d29922;font-weight:700}}
+</style>
+<h1>✈ flight what-if — {esc(where)}</h1>
+<h2>crash-frame locals</h2>
+<table>{rows or '<tr><td class=muted>no locals</td></tr>'}</table>
+<h2>ask "what if…"</h2>
+<p>Change a local at a line and see the counterfactual outcome, replayed over the
+recorded world (time/random/IO held constant).</p>
+<div>
+  var <input id=var placeholder="numbers" size=12>
+  := <input id=val placeholder="[1, 2, 3]  (JSON)" size=20>
+  at line <input id=line type=number value="{line}" size=5>
+  <button id=go>what if…</button>
+</div>
+<div id=res class=muted>baseline vs counterfactual will appear here.</div>
+<script>
+document.getElementById('go').addEventListener('click', async () => {{
+  const res = document.getElementById('res');
+  res.textContent = 'running…';
+  let value; try {{ value = JSON.parse(document.getElementById('val').value); }}
+  catch {{ value = document.getElementById('val').value; }}
+  const body = {{ var: document.getElementById('var').value,
+                  value, line: parseInt(document.getElementById('line').value,10) }};
+  try {{
+    const r = await fetch('/whatif', {{ method:'POST', headers:{{'Content-Type':'application/json'}},
+                                       body: JSON.stringify(body) }});
+    const d = await r.json();
+    if (!d.ok) {{ res.textContent = 'error: ' + d.error; return; }}
+    res.innerHTML = `<span class=b>before</span>  ${{d.baseline}}\\n` +
+                    `<span class=a>after </span>  ${{d.counterfactual}}\\n\\n` +
+                    (d.applied ? (d.changed ? '→ the change alters the outcome.'
+                                            : '→ no change to the outcome.')
+                               : '⚠ the override point was never reached.') +
+                    (d.pep667 ? '' : '\\n(note: live-local override needs Python 3.13+)');
+  }} catch (e) {{ res.textContent = 'error: ' + e; }}
+}});
+</script>
+"""
+
+
+def make_whatif_server(flight_path, host: str = "127.0.0.1", port: int = 8070):
+    import json
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _send(self, code, body: bytes, ctype="application/json"):
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path.split("?")[0].rstrip("/") in ("", "/"):
+                self._send(200, _whatif_page(flight_path).encode(), "text/html; charset=utf-8")
+            else:
+                self._send(404, b'{"error":"not found"}')
+
+        def do_POST(self):
+            if self.path.rstrip("/") != "/whatif":
+                self._send(404, b'{"error":"not found"}')
+                return
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                req = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                self._send(400, b'{"ok":false,"error":"bad json"}')
+                return
+            out = run_whatif(
+                flight_path, req.get("var", ""), req.get("value"),
+                req.get("line", 0), nth=req.get("nth", 1), qualname=req.get("qualname"),
+            )
+            self._send(200 if out.get("ok") else 422, json.dumps(out).encode())
+
+    return ThreadingHTTPServer((host, port), Handler)
+
+
+def serve_whatif(flight_path, *, host: str = "127.0.0.1", port: int = 8070):
+    server = make_whatif_server(flight_path, host, port)
+    print(f"[flight] what-if console on http://{host}:{port}  ({flight_path})")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()

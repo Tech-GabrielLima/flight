@@ -1,22 +1,20 @@
 use serde::{Deserialize, Serialize};
 
-/// What happened at one point of the execution.
-///
-/// The numeric values are part of the on-disk format — never renumber.
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum EventKind {
-    /// A Python function started (sys.monitoring PY_START).
+
     PyStart = 1,
-    /// A Python function returned (PY_RETURN).
+
     PyReturn = 2,
-    /// A new source line began executing (LINE).
+
     Line = 3,
-    /// An exception was raised (RAISE).
+
     Raise = 4,
-    /// An exception was re-raised (RERAISE).
+
     Reraise = 5,
-    /// An exception unwound a frame without a return (PY_UNWIND).
+
     PyUnwind = 6,
 }
 
@@ -45,25 +43,21 @@ impl EventKind {
     }
 }
 
-/// One execution event, as stored in the ring buffer and in EVENT_RING blocks.
-///
-/// Fixed 24-byte layout so a ring slot fits comfortably in a cache line.
-/// Serialized with msgpack as a positional array: `[kind, thread, line,
-/// code_id, tstamp]`.
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(C)]
 pub struct Event {
-    /// Discriminant, see [`EventKind`]. Stored raw so pushes stay branch-free.
+
     pub kind: u8,
-    /// Flight-assigned compact thread id (not the OS tid).
+
     pub thread: u16,
-    /// Source line for LINE events; 0 otherwise.
+
     pub line: u32,
-    /// Identity of the code object (`id(code)` on the Python side). Resolved
-    /// to file/qualname through [`CodeInfo`] entries in the same block.
+
+
     pub code_id: u64,
-    /// Global *logical* timestamp: a monotonically increasing counter, not
-    /// wall time. Orders events across threads with no clock cost.
+
+
     pub tstamp: u64,
 }
 
@@ -83,9 +77,7 @@ impl Event {
     }
 }
 
-/// Sidecar metadata resolving a `code_id` to something a human can read.
-///
-/// Captured once, on the first PY_START of each code object.
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeInfo {
     pub file: String,

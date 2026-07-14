@@ -34,7 +34,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "flight-core"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "flight-format",
  "flight-reader",
@@ -43,7 +43,7 @@ dependencies = [
 
 [[package]]
 name = "flight-format"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "rmp-serde",
  "ruzstd",
@@ -53,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "flight-reader"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "flight-format",
  "rmp-serde",

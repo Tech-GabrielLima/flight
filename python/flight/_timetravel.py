@@ -1,23 +1,3 @@
-"""Phase 5 — the reverse debugger engine (time-travel over a scope recording).
-
-Phase 2 already records every state write of a `with flight.record()` block as a
-MUTATION with its exact line and sequence number, and `Recording.state_at(seq)`
-reconstructs the locals at any point (event sourcing). Phase 5 turns that data
-into the *experience* of a reverse debugger: a cursor you can step **backward**
-and forward through, and a **breakpoint in the past** — "stop at the write where
-`running` first passed 100" — answered by searching the timeline.
-
-This module is pure logic over a :class:`~flight._read.Recording`: no terminal,
-no protocol. The DAP adapter (`_dap`) and the CLI are thin shells over it, so the
-interesting behaviour is unit-tested without an editor or a socket.
-
-Position model (event sourcing): ``pos`` is the number of writes that have
-"executed", 0..N. The *current* step is ``steps[pos-1]`` (None at pos 0), and the
-state at the cursor is the reconstruction of the first ``pos`` writes. A session
-starts at the **end** (``pos == N``) — you are at the final state and walk back,
-the post-mortem stance — and every navigation lands the cursor *on* a write.
-"""
-
 from __future__ import annotations
 
 import os
@@ -27,11 +7,10 @@ from typing import Callable, Optional
 
 @dataclass(frozen=True)
 class Step:
-    """One position in the timeline — a single recorded state write."""
 
-    index: int  # 0-based position in the (seq-sorted) timeline
+    index: int
     seq: int
-    kind: str  # "local" | "item" | "attr"
+    kind: str
     name: str
     key: Optional[str]
     file: str
@@ -39,7 +18,7 @@ class Step:
     line: int
     frame: int
     value_repr: str
-    raw: tuple  # the recorded (kind, repr, type, length) — for coercion
+    raw: tuple
 
     @property
     def where(self) -> str:
@@ -55,8 +34,6 @@ class Step:
         return f"#{self.seq} {self.where} {self.kind} {self.target} = {self.value_repr}"
 
 
-# -- value coercion & predicates -------------------------------------------
-
 _OPS: dict[str, Callable[[object, object], bool]] = {
     "==": lambda a, b: a == b,
     "!=": lambda a, b: a != b,
@@ -68,8 +45,6 @@ _OPS: dict[str, Callable[[object, object], bool]] = {
 
 
 def coerce_value(value: tuple) -> object:
-    """Best-effort recover a comparable Python value from a mutation's recorded
-    ``(kind, repr, type, length)`` rendering. Falls back to the repr string."""
     kind, rep, _type, _length = value
     if kind == "none":
         return None
@@ -79,7 +54,7 @@ def coerce_value(value: tuple) -> object:
         try:
             return int(rep)
         except (TypeError, ValueError):
-            return rep  # a giant int rendered as "<int N bits>"
+            return rep
     if kind == "float":
         try:
             return float(rep)
@@ -87,7 +62,7 @@ def coerce_value(value: tuple) -> object:
             return rep
     if kind == "str":
         return rep if rep is not None else ""
-    return rep  # containers/objects: their repr (or None)
+    return rep
 
 
 def _parse_literal(token: str) -> object:
@@ -109,7 +84,7 @@ def _parse_literal(token: str) -> object:
         return float(t)
     except ValueError:
         pass
-    return t  # a bare string
+    return t
 
 
 def _same_file(a: str, b: str) -> bool:
@@ -117,9 +92,6 @@ def _same_file(a: str, b: str) -> bool:
 
 
 def parse_len(expr: str) -> Optional[tuple[str, Callable[[int, int], bool], int]]:
-    """Parse a container-size condition ``len(name) <op> N`` — the semantic
-    timeline query "when did `cache` pass 100 entries?". Returns
-    ``(name, op_fn, N)`` or None if `expr` isn't a size query."""
     e = expr.strip()
     if not (e.startswith("len(") or e.startswith("size(")):
         return None
@@ -139,13 +111,6 @@ def parse_len(expr: str) -> Optional[tuple[str, Callable[[int, int], bool], int]
 
 
 def parse_condition(expr: str) -> tuple[str, Callable[[object], bool]]:
-    """Parse a watch condition into ``(name, predicate)``.
-
-    Supported: ``name`` or ``name changed`` (fires on any write) and
-    ``name <op> literal`` for ``op`` in ``== != > >= < <=`` with an int / float /
-    bool / None / quoted-or-bare string literal. Comparisons that raise (e.g.
-    ordering a string against a number) are treated as *not* firing, never as an
-    error, so a bad condition can't crash a debugging session (P1)."""
     expr = expr.strip()
     for op in (">=", "<=", "==", "!=", ">", "<"):
         idx = expr.find(op)
@@ -161,17 +126,13 @@ def parse_condition(expr: str) -> tuple[str, Callable[[object], bool]]:
                     return False
 
             return name, pred
-    # bare name (optionally "name changed"): fire on every write
     name = expr.split()[0] if expr.split() else expr
     return name, (lambda _value: True)
 
 
-# -- breakpoints ------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class LineBreakpoint:
-    file: str  # matched by basename/suffix, so editor abs-paths line up
+    file: str
     line: int
 
     def matches(self, step: Step) -> bool:
@@ -195,11 +156,7 @@ class Watchpoint:
         return self.predicate(coerce_value(step.raw))
 
 
-# -- the engine -------------------------------------------------------------
-
-
 class TimeTravel:
-    """A navigable cursor over a scope recording's mutation timeline."""
 
     def __init__(self, recording):
         muts = sorted(recording.mutations, key=lambda m: m.seq)
@@ -219,11 +176,10 @@ class TimeTravel:
             )
             for i, m in enumerate(muts)
         ]
-        self._pos = len(self._steps)  # start at the end (post-mortem stance)
+        self._pos = len(self._steps)
         self._line_bps: list[LineBreakpoint] = []
         self._watch: list[Watchpoint] = []
 
-    # -- geometry -----------------------------------------------------------
 
     def __len__(self) -> int:
         return len(self._steps)
@@ -245,10 +201,8 @@ class TimeTravel:
     def at_end(self) -> bool:
         return self._pos == len(self._steps)
 
-    # -- navigation ---------------------------------------------------------
 
     def goto(self, index: int) -> Optional[Step]:
-        """Land the cursor *on* step `index` (0-based, clamped)."""
         if not self._steps:
             return None
         index = max(0, min(index, len(self._steps) - 1))
@@ -274,7 +228,6 @@ class TimeTravel:
         )
 
     def continue_forward(self) -> Optional[Step]:
-        """Advance to the next breakpoint after the cursor, else to the end."""
         for j in range(self._pos, len(self._steps)):
             if self._hits(self._steps[j]):
                 self._pos = j + 1
@@ -283,7 +236,6 @@ class TimeTravel:
         return None
 
     def continue_back(self) -> Optional[Step]:
-        """Reverse to the previous breakpoint before the cursor, else the start."""
         for j in range(self._pos - 2, -1, -1):
             if self._hits(self._steps[j]):
                 self._pos = j + 1
@@ -291,14 +243,11 @@ class TimeTravel:
         self._pos = 0
         return None
 
-    # -- state reconstruction ----------------------------------------------
 
     def state(self) -> dict:
         return self.state_at(self._pos)
 
     def state_at(self, pos: int) -> dict:
-        """Reconstruct the scope's visible state after the first `pos` writes:
-        ``{"locals": {name: repr}, "containers": {name: {key: repr}}}``."""
         pos = max(0, min(pos, len(self._steps)))
         loc: dict[str, str] = {}
         cont: dict[str, dict[str, str]] = {}
@@ -310,7 +259,6 @@ class TimeTravel:
                 cont.setdefault(s.name, {})[str(s.key)] = s.value_repr
         return {"locals": loc, "containers": cont}
 
-    # -- breakpoints --------------------------------------------------------
 
     def add_line_breakpoint(self, file: str, line: int) -> LineBreakpoint:
         bp = LineBreakpoint(file, line)
@@ -335,14 +283,8 @@ class TimeTravel:
     def clear_watchpoints(self) -> None:
         self._watch = []
 
-    # -- breakpoint in the past --------------------------------------------
 
     def find_all(self, expr: str) -> list[Step]:
-        """Every write where the condition holds — the timeline of a value.
-
-        Value conditions (``running > 100``) test each write's new value; the
-        semantic size query ``len(cache) > 100`` tests the container's growing
-        entry count as item/attr writes accumulate."""
         size_q = parse_len(expr)
         if size_q is not None:
             name, op, n = size_q
@@ -362,8 +304,6 @@ class TimeTravel:
         return out
 
     def find_first(self, expr: str) -> Optional[Step]:
-        """The earliest write matching the condition, and move the cursor to it —
-        the "breakpoint in the past". Returns None (cursor unchanged) if never."""
         hits = self.find_all(expr)
         if not hits:
             return None

@@ -1,16 +1,3 @@
-"""Reading `.flight` files from Python.
-
-Two levels, both over the native reader (`flight._core`):
-
-- :func:`read` → a :class:`Flight` summary (header, blocks, exception headline,
-  event/frame/object counts) — cheap, for scripts and `flight inspect`'s header.
-- :meth:`Flight.crash` → a :class:`Crash` with the full detail: the exception
-  chain, frames with their locals, the object graph, and source texts.
-
-Phase 1.5's TUI viewer will use the richer query API of `flight-reader`
-directly; this is the ergonomic surface for scripts and the CLI.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -22,34 +9,27 @@ from . import _core
 
 @dataclass
 class Frame:
-    """One captured stack frame."""
 
     file: str
     qualname: str
     lineno: int
     first_lineno: int
-    #: (local name, object-graph node id)
     locals: list[tuple[str, int]]
 
 
 @dataclass
 class Crash:
-    """The full crash detail of a `.flight`."""
 
     partial: bool
-    #: (exc_type, message, relation) most-recent-first.
     exceptions: list[tuple[str, str, str]]
     frames: list[Frame]
-    #: node id -> node dict {kind, repr, type_name, length, truncated, items}.
     objects: dict[int, dict[str, Any]]
-    #: filename -> source text.
     sources: dict[str, str]
 
     def node(self, node_id: int) -> Optional[dict[str, Any]]:
         return self.objects.get(node_id)
 
     def render(self, node_id: int) -> str:
-        """A one-line human rendering of a node (value or type summary)."""
         n = self.objects.get(node_id)
         if n is None:
             return "<missing>"
@@ -60,7 +40,6 @@ class Crash:
         return f"{n['kind']}{suffix}"
 
     def aliases(self, node_id: int) -> list[tuple[int, str]]:
-        """Frames/locals where `node_id` appears — the aliasing view."""
         out = []
         for i, fr in enumerate(self.frames):
             for name, oid in fr.locals:
@@ -71,13 +50,11 @@ class Crash:
 
 @dataclass
 class Mutation:
-    """One recorded state write from a `with flight.record()` scope."""
 
     seq: int
-    kind: str  # "local" | "item" | "attr"
+    kind: str
     name: str
     key: Optional[str]
-    #: (value_kind, value_repr, value_type, value_length)
     value: tuple[str, Optional[str], Optional[str], Optional[int]]
     file: str
     qualname: str
@@ -93,8 +70,6 @@ class Mutation:
 
 
 class Recording:
-    """The mutation timeline of a scope `.flight` — the queries that make the
-    log useful: per-variable history, state-at-a-point, and who-mutated-what."""
 
     def __init__(self, mutations: list[Mutation]):
         self.mutations = mutations
@@ -103,16 +78,12 @@ class Recording:
         return len(self.mutations)
 
     def history(self, name: str) -> list[Mutation]:
-        """Every write to local variable `name`, in order — how it evolved."""
         return [m for m in self.mutations if m.kind == "local" and m.name == name]
 
     def who_mutated(self, name: str) -> list[Mutation]:
-        """Every item/attr write to the container/object labelled `name`."""
         return [m for m in self.mutations if m.kind in ("item", "attr") and m.name == name]
 
     def state_at(self, seq: int) -> dict[str, str]:
-        """Reconstruct the locals visible at step `seq`: for each name, the last
-        value written at or before `seq` (event sourcing — VISION.md §10)."""
         state: dict[str, str] = {}
         for m in self.mutations:
             if m.seq > seq:
@@ -122,7 +93,6 @@ class Recording:
         return state
 
     def names(self) -> list[str]:
-        """Distinct local variable names that were written."""
         seen = {}
         for m in self.mutations:
             if m.kind == "local":
@@ -132,7 +102,6 @@ class Recording:
 
 @dataclass
 class Flight:
-    """A parsed `.flight` file summary."""
 
     path: Path
     format_version: int
@@ -169,7 +138,6 @@ class Flight:
         return self.nondet_count > 0
 
     def tape(self) -> "Tape":
-        """Load the recorded non-determinism (NONDET block) as a replay Tape."""
         from ._nondet import Tape
 
         rows = _core.read_nondet(str(self.path))
@@ -181,13 +149,9 @@ class Flight:
         return self.tape().to_json()
 
     def events(self, limit: int = 500) -> list[tuple[str, str, str, int]]:
-        """Up to `limit` most-recent ring events as `(kind, file, qualname,
-        line)`, chronological — the execution path before the end."""
         return [tuple(e) for e in _core.read_events(str(self.path), limit)]
 
     def correlation(self):
-        """The distributed-trace context stamped on this black box (Phase 8),
-        or ``None`` if it carries none. See :func:`flight.correlate`."""
         from ._correlation import TraceContext
 
         try:
@@ -198,12 +162,10 @@ class Flight:
 
     @property
     def trace_id(self):
-        """The trace id this black box belongs to, or ``None``."""
         ctx = self.correlation()
         return ctx.trace_id if ctx is not None else None
 
     def recording(self) -> Recording:
-        """Load the MUTATION timeline (Phase-2 scope recording)."""
         rows = _core.read_mutations(str(self.path))
         muts = [
             Mutation(
@@ -222,13 +184,16 @@ class Flight:
         return Recording(muts)
 
     def time_travel(self):
-        """Open this scope recording as a reverse debugger (Phase 5)."""
         from ._timetravel import TimeTravel
 
         return TimeTravel(self.recording())
 
+    def why(self, frame: int = 0, var: str = "", *, max_hops: int = 32):
+        from ._slice import backward_slice
+
+        return backward_slice(self, frame=frame, var=var, max_hops=max_hops)
+
     def crash(self) -> Crash:
-        """Load the full crash detail (frames, locals, object graph, source)."""
         d = dict(_core.read_crash(str(self.path)))
         frames = [
             Frame(
@@ -252,7 +217,6 @@ class Flight:
 
 
 def read(path) -> Flight:
-    """Parse a `.flight` file and return a :class:`Flight` summary."""
     d = dict(_core.read_summary(str(path)))
     return Flight(
         path=Path(path),

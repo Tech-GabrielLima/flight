@@ -1,18 +1,8 @@
-"""Scrubbing sensitive values (P5 — privacy by design).
-
-A `.flight` captures real variable values, which may include passwords, tokens
-and personal data. Before any byte is written, a dict key or attribute name
-matching a sensitive pattern has its *value* replaced by the literal
-``<redacted>``. This exists from Phase 1, not as a later patch.
-"""
-
 from __future__ import annotations
 
 import re
 from typing import Iterable
 
-#: Default patterns (case-insensitive substring-ish) for names whose values are
-#: redacted. Deliberately broad — false positives cost nothing, leaks do.
 DEFAULT_PATTERNS: tuple[str, ...] = (
     "password",
     "passwd",
@@ -37,13 +27,8 @@ REDACTED = "<redacted>"
 
 
 class Scrubber:
-    """Decides whether a given name's value must be redacted."""
 
     def __init__(self, patterns: Iterable[str] = DEFAULT_PATTERNS):
-        # One compiled case-insensitive alternation, matched as a plain substring
-        # (no word boundaries): "auth_token" and "userAuth" redact — and so does
-        # "author". That over-redaction is deliberate (P5): a false positive
-        # costs a hidden value, a false negative leaks a real one.
         parts = [re.escape(p) for p in patterns]
         self._rx = re.compile("|".join(parts), re.IGNORECASE) if parts else None
 

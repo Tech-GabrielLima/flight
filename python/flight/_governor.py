@@ -1,54 +1,18 @@
-"""Adaptive overhead governor — overhead as an SLO, not a bet (Phase 8).
-
-The always-on recorder has an honest, *fixed* cost per event (~65 ns native;
-see the bench). That is fine until a recorded function turns into a hot loop:
-the same per-event cost, multiplied by millions of events a second, can push
-overhead past what a production service will tolerate. A fixed setting forces a
-bad choice — record everything and risk the tail latency, or record little and
-miss the crash.
-
-The governor removes the choice. It samples the recorder's event throughput on
-a background thread, estimates the fraction of wall-clock the recording is
-costing, and — if that estimate breaches the target ceiling — **demotes the
-recording granularity one rung**, giving up line events first, then returns,
-keeping only the call path and how it unwound (which is the load-bearing part of
-a black box). When throughput falls back down it **promotes** again, up to the
-granularity the user originally asked for. Overhead becomes a service-level
-objective the recorder actively defends.
-
-The decision logic (:class:`OverheadLadder`) is a pure state machine with
-hysteresis, unit-tested by feeding it a sequence of overhead estimates. The
-thread (:class:`Governor`) only samples a counter, does the arithmetic, and
-calls an ``apply`` callback — so it is trivial to drive deterministically in a
-test with an injected clock and stats source.
-"""
-
 from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-#: Recording granularity rungs, cheapest first. The governor never drops below
-#: CALLS — "which functions ran and how the exception unwound" is the minimum
-#: that still makes a useful black box.
-LEVEL_CALLS = 0  # PY_START + RAISE/RERAISE/UNWIND only
-LEVEL_RETURNS = 1  # + PY_RETURN
-LEVEL_LINES = 2  # + LINE
+LEVEL_CALLS = 0
+LEVEL_RETURNS = 1
+LEVEL_LINES = 2
 
 LEVEL_NAMES = {LEVEL_CALLS: "calls", LEVEL_RETURNS: "returns", LEVEL_LINES: "lines"}
 
 
 @dataclass
 class OverheadLadder:
-    """Pure decision state machine mapping overhead estimates → a level.
-
-    Starts at ``baseline`` (the user's requested granularity) and only ever
-    moves within ``[floor, baseline]``. Hysteresis stops it from flapping: it
-    demotes after ``demote_after`` consecutive samples over the ceiling, and
-    promotes after ``promote_after`` consecutive samples comfortably under it
-    (below ``ceiling * promote_ratio``).
-    """
 
     baseline: int
     ceiling: float = 0.03
@@ -63,8 +27,6 @@ class OverheadLadder:
         self._under = 0
 
     def observe(self, est_overhead: float) -> int:
-        """Feed one overhead estimate (fraction, e.g. 0.05 = 5%); return the
-        level to use now."""
         if est_overhead > self.ceiling:
             self._over += 1
             self._under = 0
@@ -78,8 +40,6 @@ class OverheadLadder:
                 self.level += 1
                 self._under = 0
         else:
-            # In the comfortable band around the ceiling: hold, but let the
-            # streak counters decay so a single spike doesn't trigger a move.
             self._over = 0
             self._under = 0
         return self.level
@@ -91,13 +51,6 @@ class OverheadLadder:
 
 
 def estimate_overhead(events_delta: int, elapsed_s: float, per_event_ns: float) -> float:
-    """Estimate the recording overhead as a fraction of wall-clock time.
-
-    ``events_delta`` events, each costing ``per_event_ns`` nanoseconds, spread
-    over ``elapsed_s`` seconds of wall time. This is a single-thread estimate —
-    on many cores it overestimates (the cost is spread across cores), which errs
-    on the safe side for an SLO. Honest and documented, not a promise.
-    """
     if elapsed_s <= 0:
         return 0.0
     recording_ns = events_delta * per_event_ns
@@ -105,28 +58,6 @@ def estimate_overhead(events_delta: int, elapsed_s: float, per_event_ns: float) 
 
 
 class Governor:
-    """Background sampler that keeps recording overhead under a ceiling.
-
-    Parameters
-    ----------
-    baseline:
-        The granularity the user asked for (the ceiling of what we restore to).
-    ceiling:
-        Target overhead as a fraction (``0.03`` = 3%).
-    interval:
-        Sampling period in seconds.
-    per_event_ns:
-        Calibrated cost of one recorded event; the default matches the native
-        hot path measured in the bench. Override to re-calibrate.
-    stats_source:
-        Callable returning a dict with ``total_events`` (defaults to
-        ``flight._core.stats``). Injectable for tests.
-    apply:
-        Callable ``(level: int) -> None`` invoked when the level changes
-        (defaults to retuning the live session). Injectable for tests.
-    clock:
-        Monotonic clock (defaults to ``time.monotonic``). Injectable for tests.
-    """
 
     def __init__(
         self,
@@ -152,17 +83,15 @@ class Governor:
         self._stop = threading.Event()
         self._last_events: Optional[int] = None
         self._last_t: Optional[float] = None
-        #: The most recent overhead estimate, for observability.
         self.last_estimate: float = 0.0
 
-    # -- sampling (one step, pure enough to unit-test) ----------------------
 
     def _read_events(self) -> int:
         src = self._stats_source
         if src is None:
             from . import _core
 
-            src = lambda: dict(_core.stats())  # noqa: E731
+            src = lambda: dict(_core.stats())
             self._stats_source = src
         try:
             return int(src().get("total_events", 0))
@@ -170,10 +99,6 @@ class Governor:
             return self._last_events or 0
 
     def tick(self) -> int:
-        """Take one sample, adjust the level if needed, return the level.
-
-        Safe to call directly in tests (with injected stats/clock) instead of
-        running the thread."""
         now = self._clock()
         events = self._read_events()
         if self._last_events is None or self._last_t is None:
@@ -205,7 +130,6 @@ class Governor:
         except Exception:
             pass
 
-    # -- thread lifecycle ---------------------------------------------------
 
     def start(self) -> None:
         if self._thread is not None:
@@ -227,7 +151,6 @@ class Governor:
         if t is not None:
             t.join(timeout=self.interval * 4)
         self._thread = None
-        # Restore the user's requested granularity on the way out.
         self.ladder.reset()
         self._do_apply(self.ladder.baseline)
 

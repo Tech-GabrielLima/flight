@@ -1,15 +1,3 @@
-"""The Phase-1.5 TUI viewer — a Textual app over the reader's query surface.
-
-It never touches bytes: everything comes from `flight.read(path)` and its
-`Crash` / `Recording` objects (P3). The layout is a frames-and-object-graph
-`Tree` on the left and, on the right, tabs for the source (with inline values),
-object detail, the exception chain, the event ring, and — for a scope recording
-— the mutation timeline.
-
-Rendering-free logic lives in `_viewer_model`, so it is unit-tested without a
-terminal; this module is the thin shell that wires it to widgets.
-"""
-
 from __future__ import annotations
 
 import os
@@ -25,8 +13,6 @@ from ._read import read
 
 
 class FlightViewer(App):
-    """Navigate a `.flight` file: frames → locals → object graph, with source,
-    aliasing, the event ring and the mutation timeline."""
 
     CSS = """
     Tree { width: 45%; border-right: solid $panel; }
@@ -49,7 +35,6 @@ class FlightViewer(App):
         self.title = "flight"
         self.sub_title = os.path.basename(self.path)
 
-    # -- layout ------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -71,7 +56,6 @@ class FlightViewer(App):
                         yield DataTable(id="muts", zebra_stripes=True)
         yield Footer()
 
-    # -- population --------------------------------------------------------
 
     def on_mount(self) -> None:
         tree = self.query_one("#tree", Tree)
@@ -145,7 +129,6 @@ class FlightViewer(App):
     def _show_detail(self, oid: int) -> None:
         self.query_one("#detail", Static).update("\n".join(vm.object_detail(self.crash, oid)))
 
-    # -- interaction -------------------------------------------------------
 
     def on_tree_node_expanded(self, event: Tree.NodeExpanded) -> None:
         node = event.node
@@ -190,5 +173,4 @@ class FlightViewer(App):
 
 
 def run(path) -> None:
-    """Launch the viewer on a `.flight` file."""
     FlightViewer(path).run()

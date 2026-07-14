@@ -1,9 +1,3 @@
-//! The marquee robustness suite: truncate a valid, feature-complete file at
-//! *every* byte offset and assert the reader never panics — it either errors
-//! cleanly (header region lost) or returns a `partial` file with a coherent
-//! prefix of the blocks. Also: mid-block cuts, corrupt payloads, byte-flip
-//! fuzzing, and every-single-byte-flip near the trailer.
-
 use std::collections::HashMap;
 
 use flight_format::{
@@ -41,8 +35,7 @@ fn ring(n: u64) -> RingPayload {
     }
 }
 
-/// A many-block, cleanly closed file: header, META, EXCEPTION, FRAME, OBJECT,
-/// two SOURCE blocks, EVENT_RING, INDEX + trailer.
+
 fn full() -> Vec<u8> {
     let mut buf = Vec::new();
     let mut w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
@@ -106,15 +99,12 @@ fn full() -> Vec<u8> {
     buf
 }
 
-// ---------------------------------------------------------------------------
-// the marquee test: cut at EVERY byte offset, assert no panic
-// ---------------------------------------------------------------------------
 
 #[test]
 fn truncation_at_every_offset_never_panics() {
     let bytes = full();
     for cut in 0..=bytes.len() {
-        // Any offset. The only contract: no panic. Result may be Ok or Err.
+
         let _ = FlightFile::from_bytes(&bytes[..cut]);
     }
 }
@@ -122,8 +112,8 @@ fn truncation_at_every_offset_never_panics() {
 #[test]
 fn truncation_at_every_offset_error_only_in_header_region() {
     let bytes = full();
-    // The header (magic+version+len+meta) is small; once past it the reader
-    // must never hard-error, only degrade to partial.
+
+
     let header_len = {
         let meta_len = u32::from_le_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
         flight_format::HEADER_FIXED_LEN + meta_len
@@ -146,7 +136,7 @@ fn truncation_after_header_yields_ok_readable_file() {
         let meta_len = u32::from_le_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
         flight_format::HEADER_FIXED_LEN + meta_len
     };
-    // Cut exactly at the end of the header: an empty but whole body.
+
     let f = FlightFile::from_bytes(&bytes[..header_len]).unwrap();
     assert!(f.blocks.is_empty());
     assert_eq!(f.format_version, 1);
@@ -154,7 +144,7 @@ fn truncation_after_header_yields_ok_readable_file() {
 
 #[test]
 fn every_truncation_block_count_is_monotone_nondecreasing() {
-    // As we keep more bytes, we can only ever see the same or more blocks.
+
     let bytes = full();
     let header_len = {
         let meta_len = u32::from_le_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
@@ -175,10 +165,8 @@ fn every_truncation_block_count_is_monotone_nondecreasing() {
 
 #[test]
 fn every_truncation_yields_a_prefix_of_the_full_block_list() {
-    // The strongest degradation invariant: whatever a truncated read returns,
-    // its blocks are exactly the first k blocks of the whole file — same type,
-    // same offset. Truncation only ever drops a suffix, never reorders or
-    // corrupts an earlier block.
+
+
     let bytes = full();
     let full_f = FlightFile::from_bytes(&bytes).unwrap();
     for cut in 0..=bytes.len() {
@@ -193,9 +181,6 @@ fn every_truncation_yields_a_prefix_of_the_full_block_list() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// cut exactly at the last data block boundary (footer fully gone)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn footer_fully_gone_keeps_all_data_not_partial() {
@@ -214,9 +199,6 @@ fn footer_fully_gone_keeps_all_data_not_partial() {
     assert_eq!(cut_f.event_ring(), full_f.event_ring());
 }
 
-// ---------------------------------------------------------------------------
-// mid-block truncation
-// ---------------------------------------------------------------------------
 
 #[test]
 fn mid_ring_block_keeps_earlier_blocks_and_flags_partial() {
@@ -242,7 +224,7 @@ fn cut_one_byte_into_first_block_loses_all_blocks() {
         let meta_len = u32::from_le_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
         flight_format::HEADER_FIXED_LEN + meta_len
     };
-    // A single byte of the first block header is not enough to read it.
+
     let f = FlightFile::from_bytes(&bytes[..header_len + 1]).unwrap();
     assert!(f.partial);
     assert!(f.blocks.is_empty());
@@ -255,7 +237,7 @@ fn cut_inside_block_header_is_partial() {
         let meta_len = u32::from_le_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
         flight_format::HEADER_FIXED_LEN + meta_len
     };
-    // 3 bytes into the 5-byte block header: length is incomplete.
+
     let f = FlightFile::from_bytes(&bytes[..header_len + 3]).unwrap();
     assert!(f.partial);
     assert!(f.blocks.is_empty());
@@ -265,7 +247,7 @@ fn cut_inside_block_header_is_partial() {
 fn cut_after_first_block_keeps_exactly_it() {
     let bytes = full();
     let full_f = FlightFile::from_bytes(&bytes).unwrap();
-    // second block offset == end of first block.
+
     let second_off = full_f.blocks[1].offset as usize;
     let f = FlightFile::from_bytes(&bytes[..second_off]).unwrap();
     assert_eq!(f.blocks.len(), 1);
@@ -274,9 +256,6 @@ fn cut_after_first_block_keeps_exactly_it() {
     assert_eq!(f.meta().unwrap(), meta());
 }
 
-// ---------------------------------------------------------------------------
-// corrupt payloads
-// ---------------------------------------------------------------------------
 
 #[test]
 fn corrupt_last_block_payload_drops_it_others_survive() {
@@ -288,14 +267,14 @@ fn corrupt_last_block_payload_drops_it_others_survive() {
         .find(|b| b.block_type == BlockType::EventRing as u8)
         .unwrap()
         .offset as usize;
-    // Corrupt inside the zstd frame content (past the 4-byte magic + block hdr).
+
     for i in 0..16 {
         bytes[ring_off + 5 + 4 + i] ^= 0xFF;
     }
     let f = FlightFile::from_bytes(&bytes).unwrap();
-    // META must survive regardless of which path handled the corruption.
+
     assert!(f.meta().is_some());
-    // The ring is unreadable now.
+
     assert!(f.event_ring().is_none() || f.partial || f.used_index);
 }
 
@@ -312,7 +291,7 @@ fn corrupt_middle_block_payload_never_panics() {
     for i in 0..8 {
         bytes[frame_off + 5 + 4 + i] ^= 0xAA;
     }
-    // Must not panic. Result is unconstrained.
+
     let _ = FlightFile::from_bytes(&bytes);
 }
 
@@ -321,27 +300,23 @@ fn oversized_block_length_field_is_partial_not_panic() {
     let mut bytes = full();
     let f0 = FlightFile::from_bytes(&bytes).unwrap();
     let meta_off = f0.blocks[0].offset as usize;
-    // Overwrite the META block's length with a huge value → read_block_at sees
-    // end > len → truncated tail. But the footer index still points correctly,
-    // so via_index path may disagree and fall back; either way no panic.
+
+
     bytes[meta_off + 1..meta_off + 5].copy_from_slice(&(u32::MAX).to_le_bytes());
     let _ = FlightFile::from_bytes(&bytes);
 }
 
-// ---------------------------------------------------------------------------
-// single-byte-flip fuzzing near the footer/trailer
-// ---------------------------------------------------------------------------
 
 #[test]
 fn flip_every_byte_of_trailer_region_never_panics() {
     let base = full();
     let n = base.len();
-    // The last 16 bytes cover the trailer (8) and the tail of the INDEX block.
+
     for pos in n.saturating_sub(24)..n {
         for bit in 0..8u8 {
             let mut bytes = base.clone();
             bytes[pos] ^= 1 << bit;
-            let _ = FlightFile::from_bytes(&bytes); // no panic
+            let _ = FlightFile::from_bytes(&bytes);
         }
     }
 }
@@ -364,8 +339,8 @@ fn flip_every_byte_of_header_region_never_panics() {
 
 #[test]
 fn random_byte_flips_across_whole_file_never_panic() {
-    // Deterministic pseudo-random walk (no rand dep): flip one byte at a
-    // sequence of positions and ensure the reader stays panic-free.
+
+
     let base = full();
     let n = base.len();
     let mut state = 0x1234_5678u64;
@@ -381,7 +356,7 @@ fn random_byte_flips_across_whole_file_never_panic() {
 
 #[test]
 fn truncated_then_reparsed_is_stable() {
-    // Parsing the same truncated slice twice yields identical block counts.
+
     let bytes = full();
     for cut in (0..bytes.len()).step_by(7) {
         let a = FlightFile::from_bytes(&bytes[..cut]);
@@ -400,8 +375,8 @@ fn truncated_then_reparsed_is_stable() {
 
 #[test]
 fn single_extra_trailing_garbage_byte_falls_back_to_scan() {
-    // Append one byte after a clean trailer: the trailer magic is no longer at
-    // the end, so the index fast path is off; the scan still recovers the data.
+
+
     let mut bytes = full();
     bytes.push(0xEE);
     let f = FlightFile::from_bytes(&bytes).unwrap();

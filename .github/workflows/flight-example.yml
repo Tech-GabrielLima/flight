@@ -22,7 +22,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install
-        run: pip install flight-recorder pytest
+        run: pip install pyflight pytest
 
       - name: Run tests (record a .flight for each failure)
         run: pytest --flight --flight-dir=.flight

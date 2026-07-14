@@ -1,19 +1,3 @@
-//! Reader for `.flight` files.
-//!
-//! Reading strategy, in order:
-//!
-//! 1. **Trailer path.** If the file ends with a valid trailer, jump straight
-//!    to the INDEX block and use it (fast path for cleanly closed files).
-//! 2. **Linear scan.** Otherwise — the process died, the file was truncated,
-//!    or the trailer is corrupt — scan blocks from the start and take
-//!    everything that parses. The result is flagged [`FlightFile::partial`].
-//!
-//! Two tolerance rules are absolute:
-//! - a block with an **unknown type** is kept as raw bytes and skipped by
-//!   typed accessors — never an error (old readers must survive new files);
-//! - a **truncated or corrupt tail** ends the scan gracefully — everything
-//!   before it is served normally.
-
 use std::path::Path;
 
 use std::collections::HashMap;
@@ -24,14 +8,14 @@ use flight_format::{
     HEADER_FIXED_LEN, MAGIC, TRAILER_LEN, TRAILER_MAGIC,
 };
 
-/// One block as found in the file, payload already decompressed.
+
 #[derive(Debug, Clone)]
 pub struct RawBlock {
-    /// Raw type byte (may be a type this reader does not know).
+
     pub block_type: u8,
-    /// Absolute offset of the block header in the file.
+
     pub offset: u64,
-    /// Decompressed msgpack payload.
+
     pub payload: Vec<u8>,
 }
 
@@ -43,30 +27,30 @@ impl RawBlock {
     }
 }
 
-/// A parsed `.flight` file.
+
 #[derive(Debug)]
 pub struct FlightFile {
-    /// Format version declared in the header.
+
     pub format_version: u16,
-    /// Header metadata (who wrote the file, when).
+
     pub header: HeaderMeta,
-    /// All blocks that parsed, in file order (INDEX block excluded).
+
     pub blocks: Vec<RawBlock>,
-    /// True if any part of the file failed to parse (truncation, corrupt
-    /// payload, missing footer on a file that has one more partial block…).
+
+
     pub partial: bool,
-    /// True if the footer index was present, valid and used.
+
     pub used_index: bool,
 }
 
 impl FlightFile {
-    /// Open and fully parse a `.flight` file.
+
     pub fn open(path: &Path) -> Result<FlightFile, FormatError> {
         let bytes = std::fs::read(path)?;
         FlightFile::from_bytes(&bytes)
     }
 
-    /// Parse a `.flight` file from memory.
+
     pub fn from_bytes(bytes: &[u8]) -> Result<FlightFile, FormatError> {
         let (format_version, header, body_start) = parse_header(bytes)?;
 
@@ -87,28 +71,27 @@ impl FlightFile {
         })
     }
 
-    /// The first META block, decoded — or `None` if the file has none (e.g.
-    /// truncated before it was written).
+
     pub fn meta(&self) -> Option<MetaBlock> {
         self.first_payload(BlockType::Meta)
     }
 
-    /// The first EVENT_RING block, decoded.
+
     pub fn event_ring(&self) -> Option<RingPayload> {
         self.first_payload(BlockType::EventRing)
     }
 
-    /// The exception chain (EXCEPTION block), most-recent-first.
+
     pub fn exceptions(&self) -> Vec<ExceptionLink> {
         self.first_payload(BlockType::Exception).unwrap_or_default()
     }
 
-    /// The captured stack frames (FRAME block), crash-first.
+
     pub fn frames(&self) -> Vec<FrameInfo> {
         self.first_payload(BlockType::Frame).unwrap_or_default()
     }
 
-    /// The source files captured (SOURCE blocks — there may be several).
+
     pub fn sources(&self) -> Vec<SourceFile> {
         self.blocks
             .iter()
@@ -118,31 +101,27 @@ impl FlightFile {
             .collect()
     }
 
-    /// The object graph (OBJECT block) as a flat list of nodes.
+
     pub fn objects(&self) -> Vec<ObjectNode> {
         self.first_payload(BlockType::Object).unwrap_or_default()
     }
 
-    /// The recorded state writes (MUTATION block), in `seq` order — the
-    /// event-sourcing log of a `with flight.record()` scope (Phase 2).
+
     pub fn mutations(&self) -> Vec<Mutation> {
         self.first_payload(BlockType::Mutation).unwrap_or_default()
     }
 
-    /// The recorded non-determinism (NONDET block), in `seq` order — the tape
-    /// that makes a run deterministically replayable (Phase 3).
+
     pub fn nondet(&self) -> Vec<NonDetEvent> {
         self.first_payload(BlockType::Nondet).unwrap_or_default()
     }
 
-    /// The object graph indexed by node id, for random access / expansion.
+
     pub fn object_map(&self) -> HashMap<u64, ObjectNode> {
         self.objects().into_iter().map(|n| (n.id, n)).collect()
     }
 
-    /// Every place a given object id appears as a frame local — the
-    /// signature "this SAME object is here and here" feature (VISION.md §6).
-    /// Returns `(frame_index, local_name)` pairs.
+
     pub fn aliases(&self, object_id: u64) -> Vec<(usize, String)> {
         let mut out = Vec::new();
         for (fi, frame) in self.frames().iter().enumerate() {
@@ -163,8 +142,7 @@ impl FlightFile {
     }
 }
 
-/// Parse the fixed header. This is the only place `open` can hard-fail:
-/// without a magic and a version there is nothing to be tolerant *about*.
+
 fn parse_header(bytes: &[u8]) -> Result<(u16, HeaderMeta, usize), FormatError> {
     if bytes.len() < HEADER_FIXED_LEN || &bytes[0..4] != MAGIC {
         return Err(FormatError::NotAFlightFile);
@@ -183,9 +161,7 @@ fn parse_header(bytes: &[u8]) -> Result<(u16, HeaderMeta, usize), FormatError> {
     Ok((version, header, meta_end))
 }
 
-/// Fast path: locate the INDEX block through the trailer and load blocks by
-/// offset. Any inconsistency returns `None` and the caller falls back to the
-/// linear scan — the index is an optimization, never a requirement.
+
 fn blocks_via_index(bytes: &[u8], body_start: usize) -> Option<Vec<RawBlock>> {
     if bytes.len() < TRAILER_LEN {
         return None;
@@ -210,7 +186,7 @@ fn blocks_via_index(bytes: &[u8], body_start: usize) -> Option<Vec<RawBlock>> {
     for e in entries {
         let (ty, payload) = read_block_at(bytes, e.offset as usize)?;
         if ty != e.block_type {
-            return None; // index disagrees with the bytes: fall back to scan
+            return None;
         }
         blocks.push(RawBlock {
             block_type: ty,
@@ -221,18 +197,16 @@ fn blocks_via_index(bytes: &[u8], body_start: usize) -> Option<Vec<RawBlock>> {
     Some(blocks)
 }
 
-/// Slow path: walk blocks from `body_start` until the bytes run out or stop
-/// making sense. Returns the parsed blocks and whether the walk was clean
-/// (ended exactly at EOF or at a valid trailer).
+
 fn scan_blocks(bytes: &[u8], body_start: usize) -> (Vec<RawBlock>, bool) {
     let mut blocks = Vec::new();
     let mut pos = body_start;
     loop {
         if pos == bytes.len() {
-            return (blocks, true); // clean end: footer-less but whole file
+            return (blocks, true);
         }
-        // A valid trailer also ends the walk cleanly (we just reached the
-        // INDEX block, which is a footer and never a content block).
+
+
         if bytes.len() - pos == TRAILER_LEN && &bytes[bytes.len() - 4..] == TRAILER_MAGIC {
             return (blocks, true);
         }
@@ -244,8 +218,8 @@ fn scan_blocks(bytes: &[u8], body_start: usize) -> (Vec<RawBlock>, bool) {
                     bytes[pos + 3],
                     bytes[pos + 4],
                 ]) as usize;
-                // The INDEX block is a footer, not content — never surface it,
-                // on any end path (clean EOF, trailer, or truncation).
+
+
                 if ty != BlockType::Index as u8 {
                     blocks.push(RawBlock {
                         block_type: ty,
@@ -255,13 +229,12 @@ fn scan_blocks(bytes: &[u8], body_start: usize) -> (Vec<RawBlock>, bool) {
                 }
                 pos += BLOCK_HEADER_LEN + comp_len;
             }
-            None => return (blocks, false), // truncated/corrupt tail: keep what we have
+            None => return (blocks, false),
         }
     }
 }
 
-/// Read and decompress one block at `pos`. `None` on truncation or corrupt
-/// payload.
+
 fn read_block_at(bytes: &[u8], pos: usize) -> Option<(u8, Vec<u8>)> {
     if bytes.len() < pos + BLOCK_HEADER_LEN {
         return None;

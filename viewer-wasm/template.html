@@ -6,7 +6,8 @@
 <title>Flight — black box viewer</title>
 <style>
   :root { color-scheme: dark; --bg:#0e1116; --panel:#161b22; --line:#232a34;
-          --ink:#e6edf3; --dim:#8b949e; --accent:#58a6ff; --bad:#ff7b72; --ok:#3fb950; }
+          --ink:#e6edf3; --dim:#8b949e; --accent:#58a6ff; --bad:#ff7b72; --ok:#3fb950;
+          --warn:#d29922; }
   * { box-sizing: border-box; }
   body { margin:0; font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
          background:var(--bg); color:var(--ink); }
@@ -14,11 +15,15 @@
   h1 { margin:0; font-size:18px; font-weight:600; }
   h1 .plane { color:var(--accent); }
   .sub { color:var(--dim); margin-top:4px; }
-  main { max-width:1000px; margin:0 auto; padding:24px; }
+  main { max-width:1100px; margin:0 auto; padding:24px; }
   #drop { border:2px dashed var(--line); border-radius:12px; padding:48px 24px;
           text-align:center; color:var(--dim); cursor:pointer; transition:.15s; }
   #drop.hot { border-color:var(--accent); color:var(--ink); background:#111722; }
   #drop input { display:none; }
+  .bar { display:flex; gap:8px; align-items:center; margin-top:12px; flex-wrap:wrap; }
+  button { background:var(--panel); color:var(--ink); border:1px solid var(--line);
+           border-radius:6px; padding:5px 12px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--accent); }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px;
           padding:16px 18px; margin-top:16px; }
   .card h2 { margin:0 0 10px; font-size:13px; letter-spacing:.04em; text-transform:uppercase;
@@ -38,20 +43,35 @@
   ul.events { list-style:none; margin:0; padding:0; max-height:340px; overflow:auto; }
   ul.events li { padding:3px 0; border-bottom:1px solid var(--line); }
   ul.events .kind { display:inline-block; width:92px; color:var(--accent); }
+  .cols { display:grid; grid-template-columns:2.2em 1fr 1fr; }
+  .cmp { max-height:520px; overflow:auto; border:1px solid var(--line); border-radius:8px; }
+  .cmp .row { display:grid; grid-template-columns:2.2em 1fr 1fr; border-bottom:1px solid var(--line); }
+  .cmp .row > div { padding:3px 8px; white-space:pre-wrap; word-break:break-word; }
+  .cmp .n { color:var(--dim); text-align:right; }
+  .cmp .differ > div { background:#d2992218; }
+  .cmp .diverge > div { background:#ff7b7233; font-weight:600; }
+  .cmp .diverge { scroll-margin-top:60px; }
+  .headline { margin:0 0 12px; padding:8px 12px; border-radius:8px; background:#8881; }
+  .headline.bad { background:#ff7b7222; color:var(--bad); }
   footer { color:var(--dim); text-align:center; padding:24px; font-size:12px; }
 </style>
 </head>
 <body>
 <header>
   <h1><span class="plane">✈</span> Flight — black box viewer</h1>
-  <div class="sub">Drop a <code>.flight</code> file. It's parsed <b>in your browser</b> by the
-    Rust reader compiled to WebAssembly — nothing is uploaded, nothing installed.</div>
+  <div class="sub">Drop a <code>.flight</code> file (or two, to <b>compare</b>). It's parsed
+    <b>in your browser</b> by the Rust reader compiled to WebAssembly — nothing is uploaded,
+    nothing installed.</div>
 </header>
 <main>
   <label id="drop">
-    <div id="dropmsg">Drop a <b>.flight</b> here, or click to choose one.</div>
-    <input type="file" id="file" accept=".flight" />
+    <div id="dropmsg">Drop one <b>.flight</b> to inspect, or two to diff. Click to choose.</div>
+    <input type="file" id="file" accept=".flight" multiple />
   </label>
+  <div class="bar" id="bar" style="display:none">
+    <button id="copylink" title="A shareable link to this exact view (the file stays local).">🔗 copy link to this view</button>
+    <span class="muted" id="hint"></span>
+  </div>
   <div id="out"></div>
 </main>
 <footer>Runs entirely offline · powered by <code>flight-reader</code> (Rust → WASM) · pure-Rust zstd</footer>
@@ -84,11 +104,26 @@ async function parseFlight(bytes) {
 const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const base = p => String(p).split('/').pop();
 
+// The last render, so a deep-link (#step=N) can re-highlight after reload.
+let LAST = { mode:null, names:[] };
+
+// -- state in the URL fragment (client-side; the .flight itself never travels) --
+function readHash() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  return { step: h.has('step') ? parseInt(h.get('step'),10) : null,
+           tab: h.get('tab') || null, files: (h.get('files')||'').split('|').filter(Boolean) };
+}
+function writeHash(patch) {
+  const h = new URLSearchParams(location.hash.slice(1));
+  for (const [k,v] of Object.entries(patch)) { v==null ? h.delete(k) : h.set(k,v); }
+  location.hash = h.toString();
+}
+
+// -- single-file summary ----------------------------------------------------
 function render(s, name) {
   const out = document.getElementById('out');
   if (s.error) { out.innerHTML = `<div class="card err">Could not parse: ${esc(s.error)}</div>`; return; }
   let html = '';
-
   html += `<div class="card"><h2>${esc(name)}</h2>
     <div class="kv">format v<b>${s.format_version}</b> · written by flight <b>${esc(s.flight_version||'?')}</b>
     · ${s.partial ? '<span class="err">PARTIAL</span>' : 'complete'} · ${s.used_index ? 'indexed' : 'linear-scan'}</div>
@@ -102,7 +137,6 @@ function render(s, name) {
     });
     html += `</div>`;
   }
-
   if (s.frames && s.frames.length) {
     html += `<div class="card"><h2>Frames (crash first)</h2><table>
       <tr><th>#</th><th>function</th><th>where</th><th>locals</th></tr>`;
@@ -112,44 +146,123 @@ function render(s, name) {
     });
     html += `</table></div>`;
   }
-
   if (s.meta) {
     html += `<div class="card"><h2>Environment</h2>
       <div class="kv">runtime <b>${esc(s.meta.python_version||'?')}</b> · platform <b>${esc(s.meta.platform||'?')}</b></div>
       <div class="kv">cwd ${esc(s.meta.cwd||'?')}</div>
       <div class="kv">argv ${esc((s.meta.argv||[]).join(' '))}</div></div>`;
   }
-
   html += `<div class="card"><h2>Events — ${s.event_count} across ${s.code_count} code objects${s.wrapped?' (ring wrapped)':''}</h2>`;
   if (s.recent_events && s.recent_events.length) {
     html += `<ul class="events">` + s.recent_events.map(e =>
       `<li><span class="kind">${esc(e.kind)}</span> <span class="k">${esc(e.qualname||'?')}</span>
        <span class="where">${esc(base(e.file)||'')}${e.line?(':'+e.line):''}</span></li>`).join('') + `</ul>`;
-  } else {
-    html += `<div class="muted">no ring events</div>`;
-  }
+  } else { html += `<div class="muted">no ring events</div>`; }
   html += `</div>`;
-
   out.innerHTML = html;
 }
 
-async function handleFile(file) {
-  document.getElementById('dropmsg').innerHTML = `Parsing <b>${esc(file.name)}</b>…`;
+// -- two-file compare (event-ring axis, first divergence highlighted) -------
+// Mirrors the CLI's `flight diff` on the event axis: two runs march in lockstep
+// until the run diverges, so the first mismatch is the cause boundary.
+function eventKey(e) { return `${e.kind}\t${base(e.file)}\t${e.qualname}\t${e.line}`; }
+function firstDivergence(a, b) {
+  const n = Math.min(a.length, b.length);
+  for (let i=0;i<n;i++) if (eventKey(a[i]) !== eventKey(b[i])) return i;
+  return a.length === b.length ? -1 : n;   // -1 = identical; n = one ran longer
+}
+function evRender(e) {
+  return e ? `${e.kind.padEnd(8)} ${e.qualname||'?'} (${base(e.file)||''}${e.line?':'+e.line:''})` : '';
+}
+function renderCompare(sa, sb, nameA, nameB) {
+  const out = document.getElementById('out');
+  // Events are stored most-recent-last already reversed by the reader; compare
+  // in the order given (chronological within the captured window).
+  const ea = (sa.recent_events||[]).slice().reverse();
+  const eb = (sb.recent_events||[]).slice().reverse();
+  const div = firstDivergence(ea, eb);
+  const identical = div === -1;
+  let html = `<div class="card"><h2>Comparing ${esc(nameA)} ↔ ${esc(nameB)}</h2>`;
+  // exception headline
+  const xa = (sa.exceptions||[])[0], xb = (sb.exceptions||[])[0];
+  if (xa || xb) {
+    const fa = xa ? `${xa.type}: ${xa.message}` : '(no exception)';
+    const fb = xb ? `${xb.type}: ${xb.message}` : '(no exception)';
+    html += `<div class="kv">left &nbsp;<b>${esc(fa)}</b></div><div class="kv">right <b>${esc(fb)}</b></div>`;
+  }
+  html += identical
+    ? `<div class="headline">identical on the event axis (${Math.min(ea.length,eb.length)} steps compared)</div>`
+    : `<div class="headline bad">diverged at step ${div} on the event axis — the execution path first differs here</div>`;
+  const n = Math.max(ea.length, eb.length);
+  let rows = `<div class="cmp"><div class="row"><div class="n">#</div><div>${esc(nameA)}</div><div>${esc(nameB)}</div></div>`;
+  for (let i=0;i<n;i++) {
+    const la = evRender(ea[i]), lb = evRender(eb[i]);
+    let cls = '';
+    if (!identical && i === div) cls = ' diverge';
+    else if (la !== lb) cls = ' differ';
+    rows += `<div class="row${cls}"${(!identical&&i===div)?' id="diverge"':''}>
+      <div class="n">${i}</div><div>${esc(la)}</div><div>${esc(lb)}</div></div>`;
+  }
+  rows += `</div>`;
+  html += rows + `</div>`;
+  out.innerHTML = html;
+  LAST = { mode:'compare', names:[nameA,nameB] };
+  applyDeepLink();
+}
+
+function applyDeepLink() {
+  const { step } = readHash();
+  const el = document.getElementById('diverge');
+  if (el) el.scrollIntoView({ block:'center' });
+  if (step != null) {
+    const rows = document.querySelectorAll('.cmp .row');
+    const r = rows[step+1];  // +1 for the header row
+    if (r) { r.classList.add('diverge'); r.scrollIntoView({ block:'center' }); }
+  }
+}
+
+// -- file handling ----------------------------------------------------------
+async function handleFiles(files) {
+  const list = Array.from(files).slice(0,2);
+  document.getElementById('dropmsg').innerHTML =
+    `Parsing <b>${list.map(f=>esc(f.name)).join('</b>, <b>')}</b>…`;
   try {
-    const buf = new Uint8Array(await file.arrayBuffer());
-    render(await parseFlight(buf), file.name);
+    const parsed = [];
+    for (const f of list) parsed.push([await parseFlight(new Uint8Array(await f.arrayBuffer())), f.name]);
+    if (parsed.length === 2) renderCompare(parsed[0][0], parsed[1][0], parsed[0][1], parsed[1][1]);
+    else render(parsed[0][0], parsed[0][1]);
+    document.getElementById('bar').style.display = '';
+    document.getElementById('hint').textContent =
+      parsed.length === 2 ? 'diff view — the link recalls this state; re-drop the same files to open it'
+                          : 'inspect view';
+    writeHash({ files: list.map(f=>f.name).join('|') });
   } catch (e) {
     document.getElementById('out').innerHTML = `<div class="card err">${esc(e)}</div>`;
   }
-  document.getElementById('dropmsg').innerHTML = `Drop another <b>.flight</b>, or click to choose.`;
+  document.getElementById('dropmsg').innerHTML = `Drop another <b>.flight</b> (or two to diff), or click.`;
 }
 
 const drop = document.getElementById('drop');
 const input = document.getElementById('file');
-input.addEventListener('change', () => input.files[0] && handleFile(input.files[0]));
+input.addEventListener('change', () => input.files.length && handleFiles(input.files));
 ['dragover','dragenter'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('hot'); }));
 ['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('hot'); }));
-drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) handleFile(f); });
+drop.addEventListener('drop', e => { const f = e.dataTransfer.files; if (f && f.length) handleFiles(f); });
+
+document.getElementById('copylink').addEventListener('click', async () => {
+  const el = document.getElementById('diverge');
+  if (el) { const rows=[...document.querySelectorAll('.cmp .row')]; writeHash({ step: rows.indexOf(el)-1 }); }
+  try { await navigator.clipboard.writeText(location.href); document.getElementById('hint').textContent='link copied'; }
+  catch { document.getElementById('hint').textContent='link is in the address bar'; }
+});
+
+// On load, if the fragment names files, tell the user to re-drop them (P5: the
+// .flight never travels in the URL — the link references a view, not the data).
+(function(){
+  const { files } = readHash();
+  if (files.length) document.getElementById('dropmsg').innerHTML =
+    `This link expects <b>${files.map(esc).join('</b>, <b>')}</b> — drop ${files.length>1?'them':'it'} to restore the view.`;
+})();
 </script>
 </body>
 </html>

@@ -1,15 +1,3 @@
-"""The crash-capture algorithm (VISION.md §1.3, TECHNICAL.md §1.3).
-
-On an uncaught exception we do the expensive work exactly once, in a process
-that is already dying: walk the traceback, snapshot each frame's locals into the
-object graph (crash-nearest first, so a blown budget keeps the most relevant
-data), attach the source of every file involved and the exception chain, then
-write it all to a `.flight`.
-
-The whole thing is wrapped so it can never raise into the dying program (P1):
-a failure yields `None` (or a partial file), never a second exception.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -28,11 +16,6 @@ from ._serialize import GraphSerializer
 
 
 def write_crash_flight(exc_type, exc_value, exc_tb, config: Config, path=None, correlation=None) -> Optional[Path]:
-    """Write a full crash `.flight`. Returns the path, or `None` on any failure.
-
-    `correlation` overrides `config.correlation` for this one capture — the
-    thread-safe way to stamp a per-request trace context (P8) without mutating
-    global state, which is what the web middleware needs."""
     try:
         return _capture(exc_value, exc_tb, config, path, correlation=correlation)
     except BaseException:
@@ -40,21 +23,15 @@ def write_crash_flight(exc_type, exc_value, exc_tb, config: Config, path=None, c
 
 
 def capture(config: Config, path=None, correlation=None) -> Optional[Path]:
-    """Capture the *currently handled* exception if there is one, else fall back
-    to a ring-only dump of the current state."""
     exc_type, exc_value, exc_tb = sys.exc_info()
     if exc_value is not None and exc_tb is not None:
         return write_crash_flight(exc_type, exc_value, exc_tb, config, path, correlation=correlation)
-    from ._install import dump  # ring-only
+    from ._install import dump
 
     return dump(path, config=config)
 
 
 def build_payload(exc_value, exc_tb, config: Config):
-    """Build the crash payload tuples (sources, exceptions, frames, objects)
-    from a live exception — the expensive object-graph walk, without writing.
-    Shared by the crash path and the deterministic-run crash path."""
-    # 1. Frames, crash-first (traceback is outermost→innermost; reverse it).
     frames_raw = []
     tb = exc_tb
     while tb is not None:
@@ -73,28 +50,23 @@ def build_payload(exc_value, exc_tb, config: Config):
         scrubber=scrubber,
     )
 
-    # 2. Each frame's locals become graph roots (crash-nearest first → priority).
     frame_tuples = []
     filenames: list[str] = []
     for frame, lineno in frames_raw:
         code = frame.f_code
         if code.co_filename not in filenames:
             filenames.append(code.co_filename)
-        # dict() takes an immediate shallow snapshot (PEP 667 proxy on 3.13+).
         try:
             local_items = list(dict(frame.f_locals).items())
-        except Exception:  # pragma: no cover - defensive P1 guard: a real CPython
-            local_items = []  # frame's f_locals proxy is always dict()-able; only a
-            #                   hostile fake frame could raise, which can't occur here.
+        except Exception:
+            local_items = []
         local_ids = [(str(name), graph.add_local(str(name), value)) for name, value in local_items]
         frame_tuples.append(
             (code.co_filename, code.co_qualname, int(lineno), int(code.co_firstlineno), local_ids)
         )
 
-    # 3. Serialize the graph under the budget.
     objects = graph.run()
 
-    # 4. Source of each file involved (so the viewer shows code off-machine).
     source_tuples = []
     for filename in filenames:
         text = _read_source(filename)
@@ -102,7 +74,6 @@ def build_payload(exc_value, exc_tb, config: Config):
             sha1 = hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
             source_tuples.append((filename, sha1, text))
 
-    # 5. The exception chain (__cause__ / __context__).
     exc_tuples = _exception_chain(exc_value)
     return source_tuples, exc_tuples, frame_tuples, objects
 
@@ -114,15 +85,19 @@ def _capture(exc_value, exc_tb, config: Config, path, nondet=None, correlation=N
 
     if path is None:
         path = config.crash_path(pid=os.getpid(), when_ms=int(time.time() * 1000))
-    # Phase-8: stamp the distributed-trace context onto the crash so it can be
-    # navigated across services. Correlation rides the NONDET tape alongside any
-    # deterministic-replay entries (both are read back by source name). An
-    # explicit `correlation` (from the web middleware) wins over the global one.
     nondet_all = list(nondet or [])
     ctx = correlation if correlation is not None else getattr(config, "correlation", None)
     if ctx is not None:
         try:
             nondet_all.extend(ctx.to_nondet())
+        except Exception:
+            pass
+    commit = getattr(config, "commit", None)
+    if isinstance(commit, str) and commit:
+        try:
+            from ._bisect import _SRC_COMMIT
+
+            nondet_all.append((len(nondet_all), _SRC_COMMIT, "w", commit))
         except Exception:
             pass
     _core.dump_crash(

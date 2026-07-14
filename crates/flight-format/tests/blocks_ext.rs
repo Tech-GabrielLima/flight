@@ -1,8 +1,3 @@
-//! msgpack round-trips for the block payload structs: `MetaBlock`,
-//! `RingPayload`, `Mutation`/`MutationValue`, `NonDetEvent`, `ExceptionLink`,
-//! `FrameInfo`, `ObjectNode`/`ObjectItem`, and `SourceFile` — across empty,
-//! unicode, large, and boundary field values.
-
 use std::collections::HashMap;
 
 use flight_format::{
@@ -17,9 +12,6 @@ where
     from_msgpack(&to_msgpack(v).unwrap()).unwrap()
 }
 
-// ------------------------------------------------------------------
-// MetaBlock
-// ------------------------------------------------------------------
 
 #[test]
 fn metablock_rt_default() {
@@ -77,14 +69,11 @@ fn metablock_rt_unicode() {
 
 #[test]
 fn metablock_positional_encoding_is_fixarray_5() {
-    // to_msgpack is compact/positional even though META is written named on disk.
+
     let m = MetaBlock::default();
     assert_eq!(to_msgpack(&m).unwrap()[0], 0x95);
 }
 
-// ------------------------------------------------------------------
-// RingPayload
-// ------------------------------------------------------------------
 
 #[test]
 fn ring_rt_empty() {
@@ -180,9 +169,6 @@ fn ring_rt_big_code_ids() {
     assert_eq!(rt(&p), p);
 }
 
-// ------------------------------------------------------------------
-// MutationValue / Mutation
-// ------------------------------------------------------------------
 
 #[test]
 fn mutationvalue_rt_full() {
@@ -345,9 +331,6 @@ fn mutation_vec_rt() {
     assert_eq!(rt(&muts), muts);
 }
 
-// ------------------------------------------------------------------
-// NonDetEvent
-// ------------------------------------------------------------------
 
 #[test]
 fn nondet_rt_single() {
@@ -431,9 +414,6 @@ fn nondet_vec_large_rt() {
     assert_eq!(rt(&events), events);
 }
 
-// ------------------------------------------------------------------
-// ExceptionLink
-// ------------------------------------------------------------------
 
 #[test]
 fn exclink_rt_head() {
@@ -499,9 +479,6 @@ fn exclink_rt_unicode_message() {
     assert_eq!(rt(&e), e);
 }
 
-// ------------------------------------------------------------------
-// FrameInfo
-// ------------------------------------------------------------------
 
 #[test]
 fn frame_rt_basic() {
@@ -577,9 +554,6 @@ fn frame_vec_rt() {
     assert_eq!(rt(&frames), frames);
 }
 
-// ------------------------------------------------------------------
-// ObjectItem / ObjectNode
-// ------------------------------------------------------------------
 
 #[test]
 fn objectitem_rt_key_some() {
@@ -757,9 +731,6 @@ fn objectnode_rt_unicode_repr() {
     assert_eq!(rt(&n), n);
 }
 
-// ------------------------------------------------------------------
-// SourceFile
-// ------------------------------------------------------------------
 
 #[test]
 fn source_rt_basic() {

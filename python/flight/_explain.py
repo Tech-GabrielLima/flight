@@ -1,19 +1,3 @@
-"""Phase 7 — the intelligence layer: `flight explain`.
-
-A `.flight` is the perfect structured context for an LLM — the exception chain,
-the crash frame's locals, the object graph, the recent execution path and the
-source, all already queryable. This module turns a crash into (1) a deterministic
-**heuristic root-cause summary** you get offline, with no model and no network,
-and (2) an **LLM-ready prompt** that bundles that context, which an optional
-pluggable provider can turn into a natural-language explanation + suggested patch.
-
-The valuable, testable core is the context builder and the heuristics; the model
-call is a thin, injectable layer (`provider(prompt) -> text`), so `flight explain`
-is useful and fully tested with no API key, and *becomes* an LLM explainer when
-you configure one. Nothing here can crash the tool — a hostile recording yields a
-degraded summary, never an exception (P1).
-"""
-
 from __future__ import annotations
 
 import os
@@ -25,19 +9,16 @@ _EMPTYABLE = {"list", "dict", "tuple", "set", "frozenset", "str", "bytes"}
 
 @dataclass
 class Explanation:
-    summary: str  # heuristic root cause (offline, deterministic)
-    prompt: str  # an LLM-ready prompt bundling the crash context
+    summary: str
+    prompt: str
     suspects: list[str] = field(default_factory=list)
-    llm: Optional[str] = None  # a provider's explanation, if one ran
+    llm: Optional[str] = None
 
     def render(self) -> str:
         out = [self.summary]
         if self.llm:
             out.append("\n--- model explanation ---\n" + self.llm)
         return "\n".join(out)
-
-
-# -- context ----------------------------------------------------------------
 
 
 def _source_window(source: str, lineno: int, radius: int = 3) -> list[str]:
@@ -52,7 +33,6 @@ def _source_window(source: str, lineno: int, radius: int = 3) -> list[str]:
 
 
 def _suspicion(node: Optional[dict]) -> Optional[str]:
-    """Why a value looks like the culprit — or None if it looks fine."""
     if node is None:
         return None
     kind = node.get("kind")
@@ -66,8 +46,6 @@ def _suspicion(node: Optional[dict]) -> Optional[str]:
 
 
 def build_context(flight_path) -> dict:
-    """Assemble the structured crash context both the heuristics and the LLM
-    prompt draw from. Never raises: an unreadable crash yields ``{}``-ish."""
     from ._read import read
 
     fl = read(flight_path)
@@ -83,7 +61,6 @@ def build_context(flight_path) -> dict:
     ctx["crash_frame"] = {"qualname": top.qualname, "file": top.file, "line": top.lineno}
     src = crash.sources.get(top.file)
     ctx["source_window"] = _source_window(src, top.lineno) if src else []
-    # crash-frame locals, rendered, with suspicion + aliasing flags
     locs = []
     for name, oid in top.locals:
         if name.startswith("__") and name.endswith("__"):
@@ -95,17 +72,11 @@ def build_context(flight_path) -> dict:
         if why:
             ctx["suspects"].append(f"{name} ({rendered}) {why}")
     ctx["locals"] = locs
-    # the outer call path (qualname per frame), crash-first
     ctx["stack"] = [f"{fr.qualname} ({os.path.basename(fr.file)}:{fr.lineno})" for fr in crash.frames]
     return ctx
 
 
-# -- heuristic analysis (offline) ------------------------------------------
-
-
 def analyze(ctx: dict) -> tuple[str, list[str]]:
-    """A deterministic root-cause summary from the context. Returns
-    ``(summary, suspects)``."""
     if not ctx.get("has_crash"):
         return ("This recording has no crash (no exception/frames captured).", [])
     excs = ctx.get("exceptions") or []
@@ -121,7 +92,6 @@ def analyze(ctx: dict) -> tuple[str, list[str]]:
         lines.append("  likely cause — suspicious state at the crash:")
         for s in suspects:
             lines.append(f"    • {s}")
-        # A pointed guess for the classic cases.
         first = suspects[0]
         if etype == "ZeroDivisionError":
             lines.append("  → a divisor is zero.")
@@ -138,11 +108,7 @@ def analyze(ctx: dict) -> tuple[str, list[str]]:
     return ("\n".join(lines), suspects)
 
 
-# -- LLM prompt -------------------------------------------------------------
-
-
 def prompt_text(ctx: dict) -> str:
-    """A compact, model-agnostic prompt bundling the crash context."""
     if not ctx.get("has_crash"):
         return "No crash was recorded in this .flight; nothing to explain."
     excs = ctx.get("exceptions") or []
@@ -173,12 +139,7 @@ def prompt_text(ctx: dict) -> str:
     return "\n".join(lines)
 
 
-# -- provider (optional) ----------------------------------------------------
-
-
 def _default_provider() -> Optional[Callable[[str], str]]:
-    """An Anthropic-backed provider if `anthropic` + an API key are present;
-    otherwise None (so `explain` stays offline by default)."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return None
     try:
@@ -198,9 +159,6 @@ def _default_provider() -> Optional[Callable[[str], str]]:
 
 
 def explain(flight_path, provider: Optional[Callable[[str], str]] = None, *, use_llm: bool = False):
-    """Explain a crash `.flight`. Deterministic by default (heuristics + an
-    LLM-ready prompt); if `provider` is given (or `use_llm` and one is
-    configured), also returns the model's explanation. See :class:`Explanation`."""
     ctx = build_context(flight_path)
     summary, suspects = analyze(ctx)
     prompt = prompt_text(ctx)
@@ -209,6 +167,6 @@ def explain(flight_path, provider: Optional[Callable[[str], str]] = None, *, use
     if resolved is not None:
         try:
             llm = resolved(prompt)
-        except Exception as e:  # a model/network failure never breaks explain (P1)
+        except Exception as e:
             llm = f"(model call failed: {type(e).__name__}: {e})"
     return Explanation(summary=summary, prompt=prompt, suspects=suspects, llm=llm)

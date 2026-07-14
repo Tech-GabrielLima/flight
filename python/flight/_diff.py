@@ -1,22 +1,3 @@
-"""Phase 6 — debugging by comparison: `flight diff`.
-
-Two recordings of the "same" program — one that worked, one that failed — carry
-the answer to *why* between them: the **first point they diverged**. A traceback
-can't show that; a diff of the timelines can. flight compares two `.flight`
-files position by position and reports the earliest step where they differ:
-
-- **mutation timelines** (scope recordings): the first state write whose target
-  or value differs — "at step 12, `total` was 40 here but 39 there";
-- **non-determinism tapes** (deterministic runs): the first boundary call that
-  answered differently — "the 7th `random()` returned 0.83 vs 0.11", or a
-  *source* mismatch meaning control flow branched — the root of a flaky test;
-- **event rings** otherwise: the first execution step (call/line/return) that
-  took a different path.
-
-Position-by-position is the right model: two runs of the same code march in
-lockstep until the run diverges, so the first mismatch *is* the cause boundary.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -25,18 +6,16 @@ from typing import Optional
 
 @dataclass
 class Divergence:
-    """Where (and how) two recordings first differ."""
 
-    kind: str  # "mutation" | "nondet" | "event" | "incomparable"
+    kind: str
     identical: bool
-    index: Optional[int]  # position of the first difference (0-based)
-    left: Optional[str]  # rendering of the left recording at that point
-    right: Optional[str]  # rendering of the right recording at that point
-    detail: str  # a one-line human explanation
-    compared: int = 0  # how many positions were compared
+    index: Optional[int]
+    left: Optional[str]
+    right: Optional[str]
+    detail: str
+    compared: int = 0
 
     def __bool__(self) -> bool:
-        """Truthy when the recordings diverged."""
         return not self.identical
 
     def render(self) -> str:
@@ -57,16 +36,11 @@ def _identical(kind: str, compared: int) -> Divergence:
     return Divergence(kind, True, None, None, None, "the recordings match", compared)
 
 
-# -- mutation timelines -----------------------------------------------------
-
-
 def _mut_key(m) -> tuple:
-    """The identity of a write for alignment: where + what it targeted."""
     return (m.kind, m.name, m.key, m.line)
 
 
 def diff_mutations(a, b) -> Divergence:
-    """First mutation where two scope `Recording`s differ (target or value)."""
     ma, mb = a.mutations, b.mutations
     n = min(len(ma), len(mb))
     for i in range(n):
@@ -103,13 +77,7 @@ def _render_mut(m) -> str:
     return f"#{m.seq} {m.kind} {_target(m)} = {m.value_repr}"
 
 
-# -- non-determinism tapes --------------------------------------------------
-
-
 def diff_tapes(a, b) -> Divergence:
-    """First boundary call where two deterministic `Tape`s answered differently.
-    A `source` mismatch means the code took a different branch (control flow
-    diverged); a `payload` mismatch means the world answered differently."""
     ra, rb = a.rows(), b.rows()
     n = min(len(ra), len(rb))
     for i in range(n):
@@ -142,11 +110,7 @@ def _render_row(row) -> str:
     return f"{src} [{tag}] {p}"
 
 
-# -- event rings ------------------------------------------------------------
-
-
 def diff_events(a_events, b_events) -> Divergence:
-    """First ring event (kind, file, qualname, line) that took a different path."""
     n = min(len(a_events), len(b_events))
     for i in range(n):
         if tuple(a_events[i]) != tuple(b_events[i]):
@@ -167,12 +131,7 @@ def _render_event(e) -> str:
     return f"{kind} {qual} ({os.path.basename(file)}:{line})"
 
 
-# -- auto-detecting file diff ----------------------------------------------
-
-
 def diff_files(path_a: str, path_b: str) -> Divergence:
-    """Compare two `.flight` files, choosing the richest axis they share:
-    mutation timeline, then non-determinism tape, then the event ring."""
     from ._read import read
 
     fa, fb = read(path_a), read(path_b)
@@ -182,9 +141,74 @@ def diff_files(path_a: str, path_b: str) -> Divergence:
         return diff_tapes(fa.tape(), fb.tape())
     ea, eb = fa.events(), fb.events()
     if ea and eb:
-        # Rings are stored most-recent-last; compare chronologically.
         return diff_events(ea, eb)
     return Divergence(
         "incomparable", False, None, None, None,
         "the two files share no comparable axis (mutations / tape / events)", 0,
     )
+
+
+def _axis_rows(fl):
+    if fl.has_mutations:
+        return "mutation", [_render_mut(m) for m in fl.recording().mutations]
+    if fl.has_nondet:
+        return "nondet", [_render_row(r) for r in fl.tape().rows()]
+    return "event", [_render_event(e) for e in fl.events()]
+
+
+def diff_html(path_a: str, path_b: str) -> str:
+    import os
+
+    from ._read import read
+
+    fa, fb = read(path_a), read(path_b)
+    div = diff_files(path_a, path_b)
+    if fa.has_mutations and fb.has_mutations:
+        kind = "mutation"
+    elif fa.has_nondet and fb.has_nondet:
+        kind = "nondet"
+    else:
+        kind = "event"
+    _ka, rows_a = _axis_rows(fa)
+    _kb, rows_b = _axis_rows(fb)
+
+    def esc(s):
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    n = max(len(rows_a), len(rows_b))
+    body = []
+    for i in range(n):
+        a = rows_a[i] if i < len(rows_a) else ""
+        b = rows_b[i] if i < len(rows_b) else ""
+        cls = " class=diverge" if (div.index is not None and i == div.index) else (
+            "" if a == b else " class=differ"
+        )
+        body.append(
+            f"<tr{cls}><td class=n>{i}</td><td>{esc(a)}</td><td>{esc(b)}</td></tr>"
+        )
+
+    headline = (
+        f"identical on the {kind} axis ({div.compared} steps compared)"
+        if div.identical
+        else f"diverged at step {div.index} on the {kind} axis — {esc(div.detail)}"
+    )
+    return f"""<!doctype html><meta charset=utf-8><title>flight diff</title>
+<style>
+  :root{{color-scheme:light dark}}
+  body{{font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;margin:0;padding:24px;
+        background:Canvas;color:CanvasText}}
+  h1{{font-size:17px}} .headline{{margin:8px 0 16px;padding:8px 12px;border-radius:8px;
+     background:#8881}} .headline.bad{{background:#ff7b7233;color:#ff7b72}}
+  table{{width:100%;border-collapse:collapse}}
+  td,th{{text-align:left;padding:4px 8px;border-bottom:1px solid #8883;vertical-align:top}}
+  .n{{color:#8b949e;width:3em;text-align:right}}
+  tr.differ td{{background:#d2992218}}
+  tr.diverge td{{background:#ff7b7233;font-weight:600}}
+  .cols th{{color:#8b949e}}
+</style>
+<h1>✈ flight diff</h1>
+<div class="headline {'bad' if not div.identical else ''}">{headline}</div>
+<table><tr class=cols><th class=n>#</th><th>{esc(os.path.basename(path_a))}</th>
+<th>{esc(os.path.basename(path_b))}</th></tr>
+{''.join(body)}</table>
+"""

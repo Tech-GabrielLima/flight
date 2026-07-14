@@ -1,5 +1,3 @@
-//! Format constants and struct-layout invariants.
-
 use flight_format::{
     Event, EventKind, BLOCK_HEADER_LEN, FORMAT_VERSION, HEADER_FIXED_LEN, MAGIC, TRAILER_LEN,
     TRAILER_MAGIC, ZSTD_LEVEL,
@@ -12,7 +10,7 @@ fn header_fixed_len_is_10() {
 
 #[test]
 fn header_fixed_len_composition() {
-    // magic(4) + version(2) + meta-len(4)
+
     assert_eq!(HEADER_FIXED_LEN, 4 + 2 + 4);
 }
 
@@ -23,7 +21,7 @@ fn block_header_len_is_5() {
 
 #[test]
 fn block_header_len_composition() {
-    // type(1) + payload-len(4)
+
     assert_eq!(BLOCK_HEADER_LEN, 1 + 4);
 }
 
@@ -34,7 +32,7 @@ fn trailer_len_is_8() {
 
 #[test]
 fn trailer_len_composition() {
-    // index-total-len(4) + trailer magic(4)
+
     assert_eq!(TRAILER_LEN, 4 + 4);
 }
 
@@ -58,7 +56,7 @@ fn trailer_magic_is_tlgf() {
 #[test]
 fn magic_and_trailer_magic_differ() {
     assert_ne!(MAGIC, TRAILER_MAGIC);
-    // TLGF is FLGT with the first two bytes swapped-ish; assert they are distinct.
+
     assert_ne!(&MAGIC[..], &TRAILER_MAGIC[..]);
 }
 
@@ -79,7 +77,7 @@ fn event_is_24_bytes() {
 
 #[test]
 fn event_alignment_is_8() {
-    // repr(C) with a u64 field => 8-byte alignment.
+
     assert_eq!(std::mem::align_of::<Event>(), 8);
 }
 
@@ -95,7 +93,7 @@ fn event_new_sets_raw_kind() {
 
 #[test]
 fn header_fixed_len_leaves_room_for_all_fields() {
-    // The three fixed sub-fields fit exactly within HEADER_FIXED_LEN.
+
     let magic = 4usize;
     let version = std::mem::size_of::<u16>();
     let metalen = std::mem::size_of::<u32>();

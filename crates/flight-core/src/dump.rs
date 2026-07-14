@@ -7,17 +7,7 @@ use flight_format::{
 
 use crate::recorder::Recorder;
 
-/// Write a complete `.flight` file from the recorder's current state.
-///
-/// Phase 0/1 black-box shape: a META block (environment) followed by an
-/// EVENT_RING block (the merged rear-view mirror). The file is cleanly closed
-/// with a footer index, because a deliberate `dump()`/`capture()` is a clean
-/// exit — the crash path that skips `finish()` is exercised by the writer's
-/// own tests and by the reader's truncation suite.
-///
-/// Follows P1 (never take down the user's process): the whole thing is a
-/// single fallible call the caller wraps; on any error the partially written
-/// file is still a valid, `partial` `.flight` per the format's rules.
+
 pub fn dump(path: &Path, meta: MetaBlock, recorder: &Recorder) -> Result<(), FormatError> {
     let header = HeaderMeta::new(&meta.flight_version);
     let mut w = FlightWriter::create(path, &header)?;
@@ -28,13 +18,7 @@ pub fn dump(path: &Path, meta: MetaBlock, recorder: &Recorder) -> Result<(), For
     Ok(())
 }
 
-/// The full Phase-1 black box: META, one SOURCE block per file, the EXCEPTION
-/// chain, the FRAME stack, the OBJECT graph, and the EVENT_RING.
-///
-/// The Python engine has already done the dangerous work (walking live objects
-/// under a time/byte budget); this just lays the blocks down in order and
-/// closes the file. Written crash-first so that if the reader is ever truncated
-/// mid-file, the most relevant frames/objects survive (VISION.md §1.3).
+
 #[allow(clippy::too_many_arguments)]
 pub fn dump_crash(
     path: &Path,
@@ -61,8 +45,8 @@ pub fn dump_crash(
     if !nondet.is_empty() {
         w.write_block(BlockType::Nondet, &nondet)?;
     }
-    // One SOURCE block per file keeps each self-contained and lets a truncated
-    // reader still use the files it did get.
+
+
     for src in sources {
         w.write_block(BlockType::Source, &vec![src])?;
     }
@@ -72,8 +56,7 @@ pub fn dump_crash(
     Ok(())
 }
 
-/// The Phase-3 deterministic recording: META and the NONDET tape (plus any
-/// SOURCE files). Written on a clean exit of `with flight.deterministic()`.
+
 pub fn dump_nondet(
     path: &Path,
     meta: MetaBlock,
@@ -96,8 +79,7 @@ pub fn dump_nondet(
     Ok(())
 }
 
-/// The Phase-2 scope recording: META, the MUTATION log, one SOURCE block per
-/// file, and the EVENT_RING. Written on a clean `with flight.record()` exit.
+
 pub fn dump_scope(
     path: &Path,
     meta: MetaBlock,
@@ -222,7 +204,6 @@ mod dump_ext {
         }
     }
 
-    // -- dump ---------------------------------------------------------------
 
     #[test]
     fn dump_is_clean_and_indexed() {
@@ -268,8 +249,8 @@ mod dump_ext {
 
     #[test]
     fn dump_drains_the_ring() {
-        // After a dump the recorder's rings are drained but drain is
-        // nondestructive, so a second dump produces the same events.
+
+
         let rec = recorder_with(10);
         let p1 = tmp("dump-drain-1");
         let p2 = tmp("dump-drain-2");
@@ -282,7 +263,6 @@ mod dump_ext {
         assert_eq!(a.events.len(), b.events.len());
     }
 
-    // -- dump_crash ---------------------------------------------------------
 
     fn exceptions() -> Vec<ExceptionLink> {
         vec![
@@ -401,7 +381,7 @@ mod dump_ext {
     fn dump_crash_skips_empty_optional_blocks() {
         let path = tmp("crash-minimal");
         let _c = Cleanup(path.clone());
-        // No exceptions, frames, objects, nondet or sources: only META + RING.
+
         dump_crash(
             &path,
             meta(),
@@ -450,8 +430,8 @@ mod dump_ext {
 
     #[test]
     fn dump_crash_is_written_crash_first() {
-        // EXCEPTION/FRAME/OBJECT precede EVENT_RING so a truncated reader keeps
-        // the most relevant blocks.
+
+
         let path = tmp("crash-order");
         let _c = Cleanup(path.clone());
         dump_crash(
@@ -472,7 +452,6 @@ mod dump_ext {
         assert!(exc_pos < ring_pos, "exception block precedes the ring");
     }
 
-    // -- dump_nondet --------------------------------------------------------
 
     #[test]
     fn dump_nondet_roundtrip() {
@@ -510,7 +489,6 @@ mod dump_ext {
         assert!(f.blocks.iter().all(|b| b.block_type != BlockType::Nondet as u8));
     }
 
-    // -- dump_scope ---------------------------------------------------------
 
     fn mutations() -> Vec<Mutation> {
         vec![

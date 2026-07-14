@@ -1,16 +1,3 @@
-//! `flight._core` — the native hot path of Flight, exposed to Python via PyO3.
-//!
-//! Responsibilities kept here (and nowhere in Python):
-//! - the lock-free per-thread [`ring::Ring`] and the [`recorder::Recorder`]
-//!   that owns the logical clock and the code map;
-//! - writing the `.flight` file ([`dump`]);
-//! - a small read summary for the CLI.
-//!
-//! Everything crossing the FFI obeys **P1 — primum non nocere**: a Rust panic
-//! never unwinds into the interpreter. Hot-path callbacks (`record`,
-//! `register_code`) swallow panics and return quietly; a corrupted recording
-//! is acceptable, a crash caused by Flight is not.
-
 mod dump;
 mod recorder;
 mod ring;
@@ -31,13 +18,13 @@ use flight_format::{
 use flight_reader::FlightFile;
 use recorder::Recorder;
 
-/// `(filename, sha1, text)` as passed from Python.
+
 type SourceTuple = (String, String, String);
-/// `(exc_type, message, relation)`.
+
 type ExceptionTuple = (String, String, String);
-/// `(file, qualname, lineno, first_lineno, [(name, object_id)])`.
+
 type FrameTuple = (String, String, u32, u32, Vec<(String, u64)>);
-/// `(id, kind, repr, type_name, length, truncated, [(key, value_id)])`.
+
 type ObjectTuple = (
     u64,
     String,
@@ -47,9 +34,9 @@ type ObjectTuple = (
     bool,
     Vec<(Option<String>, u64)>,
 );
-/// `(kind, repr, type_name, length)` — a shallow value rendering.
+
 type ValueTuple = (String, Option<String>, Option<String>, Option<u64>);
-/// `(seq, kind, name, key, value, file, qualname, line, frame)`.
+
 type MutationTuple = (
     u64,
     String,
@@ -61,25 +48,23 @@ type MutationTuple = (
     u32,
     u64,
 );
-/// `(seq, source, tag, payload)` — one recorded non-deterministic result.
+
 type NonDetTuple = (u64, String, String, String);
 
-/// The process-global recorder, built once on first use.
+
 static RECORDER: OnceLock<Recorder> = OnceLock::new();
-/// Ring capacity to use when the recorder is first built. Settable via
-/// [`configure`] before the recorder exists.
+
+
 static RING_CAP: AtomicUsize = AtomicUsize::new(4096);
 
 fn recorder() -> &'static Recorder {
     RECORDER.get_or_init(|| Recorder::new(RING_CAP.load(Ordering::Relaxed)))
 }
 
-/// `sys.monitoring.DISABLE`, handed to us at configure time so the native
-/// callbacks can return it without a Python attribute lookup on the hot path.
+
 static DISABLE: OnceLock<Py<PyAny>> = OnceLock::new();
 
-/// Record one execution event. Retained for the Python fallback path and
-/// tests; the fast path is the native callbacks below.
+
 #[pyfunction]
 fn record(kind: u8, code_id: u64, line: u32) {
     let _ = catch_unwind(|| {
@@ -89,16 +74,14 @@ fn record(kind: u8, code_id: u64, line: u32) {
     });
 }
 
-/// Install the deny/force policy and the `DISABLE` sentinel so the native
-/// `sys.monitoring` callbacks can filter and record entirely in Rust.
+
 #[pyfunction]
 fn configure_filter(deny: Vec<String>, force: Vec<String>, disable: Py<PyAny>) {
     recorder().set_filter(deny, force);
     let _ = DISABLE.set(disable);
 }
 
-/// `None` to keep the event, or `sys.monitoring.DISABLE` to stop being called
-/// at this location (the coverage.py trick — pay once, then nothing).
+
 #[inline]
 fn keep_or_disable(py: Python<'_>, disable: bool) -> Py<PyAny> {
     if disable {
@@ -109,18 +92,14 @@ fn keep_or_disable(py: Python<'_>, disable: bool) -> Py<PyAny> {
     py.None()
 }
 
-// A lock-free, thread-local direct-mapped cache of the interesting decision, so
-// the per-event hot path never touches the recorder's mutex. A hot loop calls a
-// handful of code objects, so the cache hits ~100%; a miss (or a stale entry
-// after `reset()` bumps the generation) falls back to the recorder, which stays
-// the source of truth. Thread-local ⇒ no sharing ⇒ correct under free-threading.
+
 const CACHE_SIZE: usize = 512;
 
 #[derive(Clone, Copy)]
 struct CacheSlot {
     code_id: u64,
     generation: u64,
-    /// 1 = interesting, 2 = not; 0 = empty.
+
     state: u8,
 }
 
@@ -129,19 +108,18 @@ thread_local! {
         const { std::cell::UnsafeCell::new([CacheSlot { code_id: 0, generation: 0, state: 0 }; CACHE_SIZE]) };
 }
 
-/// Decide whether `code` is interesting (cached per code id), registering it on
-/// first sight. Returns its `code_id` if interesting, or `None` to DISABLE.
+
 #[inline]
 fn interesting_code_id(code: &Bound<'_, PyAny>) -> Option<u64> {
     let code_id = code.as_ptr() as u64;
     let rec = recorder();
     let generation = rec.generation();
-    // Pointers are 16-byte aligned, so shift the low zero bits out of the index.
+
     let idx = ((code_id >> 4) as usize) & (CACHE_SIZE - 1);
 
-    // Fast path: a lock-free thread-local hit.
+
     let cached = INTEREST.with(|c| {
-        // SAFETY: thread-local, so this thread is the only accessor.
+
         let slot = unsafe { (*c.get())[idx] };
         if slot.code_id == code_id && slot.generation == generation {
             slot.state
@@ -180,9 +158,9 @@ fn interesting_code_id(code: &Bound<'_, PyAny>) -> Option<u64> {
             v
         }
     };
-    // Fill the thread-local slot for next time.
+
     INTEREST.with(|c| {
-        // SAFETY: thread-local, single accessor.
+
         unsafe {
             (*c.get())[idx] = CacheSlot {
                 code_id,
@@ -198,8 +176,7 @@ fn interesting_code_id(code: &Bound<'_, PyAny>) -> Option<u64> {
     }
 }
 
-/// Record a filtered event; returns whether to DISABLE this location. Only for
-/// events that support DISABLE (LINE, PY_START, PY_RETURN).
+
 #[inline]
 fn record_filtered(code: &Bound<'_, PyAny>, kind: EventKind, line: u32) -> bool {
     match interesting_code_id(code) {
@@ -211,8 +188,7 @@ fn record_filtered(code: &Bound<'_, PyAny>, kind: EventKind, line: u32) -> bool 
     }
 }
 
-/// Record a filtered event without ever disabling — `sys.monitoring` forbids
-/// returning DISABLE from RAISE / RERAISE / PY_UNWIND.
+
 #[inline]
 fn record_no_disable(code: &Bound<'_, PyAny>, kind: EventKind) {
     if let Some(code_id) = interesting_code_id(code) {
@@ -220,8 +196,7 @@ fn record_no_disable(code: &Bound<'_, PyAny>, kind: EventKind) {
     }
 }
 
-/// Native `sys.monitoring` LINE callback — the hot path, called by the
-/// interpreter directly (no Python frame, no second FFI hop).
+
 #[pyfunction]
 fn cb_line(py: Python<'_>, code: Bound<'_, PyAny>, line: u32) -> Py<PyAny> {
     let disable = catch_unwind(AssertUnwindSafe(|| {
@@ -231,7 +206,7 @@ fn cb_line(py: Python<'_>, code: Bound<'_, PyAny>, line: u32) -> Py<PyAny> {
     keep_or_disable(py, disable)
 }
 
-/// Native PY_START callback.
+
 #[pyfunction]
 fn cb_py_start(py: Python<'_>, code: Bound<'_, PyAny>, _offset: Bound<'_, PyAny>) -> Py<PyAny> {
     let disable = catch_unwind(AssertUnwindSafe(|| {
@@ -241,7 +216,7 @@ fn cb_py_start(py: Python<'_>, code: Bound<'_, PyAny>, _offset: Bound<'_, PyAny>
     keep_or_disable(py, disable)
 }
 
-/// Native PY_RETURN callback.
+
 #[pyfunction]
 fn cb_py_return(
     py: Python<'_>,
@@ -256,8 +231,7 @@ fn cb_py_return(
     keep_or_disable(py, disable)
 }
 
-/// Native RAISE / RERAISE / PY_UNWIND callbacks (all carry an exception arg).
-/// These events cannot be disabled, so they always return `None`.
+
 #[pyfunction]
 fn cb_raise(
     py: Python<'_>,
@@ -297,15 +271,13 @@ fn cb_unwind(
     py.None()
 }
 
-/// Register a code object's identity the first time it is seen. Returns
-/// `True` if this was the first registration for `code_id`.
+
 #[pyfunction]
 fn register_code(code_id: u64, file: &str, qualname: &str, first_line: u32) -> bool {
     catch_unwind(|| recorder().register_code(code_id, file, qualname, first_line)).unwrap_or(false)
 }
 
-/// Set the ring capacity. Only effective before the recorder is first used;
-/// returns `True` if it took effect, `False` if the recorder already exists.
+
 #[pyfunction]
 fn configure(ring_cap: usize) -> bool {
     if RECORDER.get().is_some() {
@@ -315,7 +287,7 @@ fn configure(ring_cap: usize) -> bool {
     true
 }
 
-/// Recorder counters, for `flight.stats()`.
+
 #[pyfunction]
 fn stats(py: Python<'_>) -> PyResult<Py<PyDict>> {
     let d = PyDict::new(py);
@@ -327,13 +299,13 @@ fn stats(py: Python<'_>) -> PyResult<Py<PyDict>> {
     Ok(d.into())
 }
 
-/// Forget all recorded state.
+
 #[pyfunction]
 fn reset() {
     let _ = catch_unwind(|| recorder().reset());
 }
 
-/// Write the current recording to a `.flight` file at `path`.
+
 #[pyfunction]
 #[pyo3(name = "dump")]
 #[allow(clippy::too_many_arguments)]
@@ -355,11 +327,7 @@ fn dump_file(
     dump::dump(&path, meta, recorder()).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
-/// Write the full Phase-1 crash black box to `path`.
-///
-/// Data is passed as plain tuples that PyO3 converts automatically — the object
-/// graph and frames are built in Python (the object walk runs once, in a doomed
-/// process), and this only lays down the blocks. See [`dump::dump_crash`].
+
 #[pyfunction]
 #[pyo3(name = "dump_crash")]
 #[allow(clippy::too_many_arguments)]
@@ -448,10 +416,7 @@ fn dump_crash(
     .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
-/// Write a Phase-2 scope recording (`with flight.record()`) to `path`.
-///
-/// The mutation log is built in Python (the LINE-diff capture) and passed as
-/// tuples; this lays down META + MUTATION + SOURCE + EVENT_RING and closes.
+
 #[pyfunction]
 #[pyo3(name = "dump_scope")]
 #[allow(clippy::too_many_arguments)]
@@ -507,7 +472,7 @@ fn dump_scope(
         .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
-/// Write a Phase-3 deterministic recording (`with flight.deterministic()`).
+
 #[pyfunction]
 #[pyo3(name = "dump_nondet")]
 #[allow(clippy::too_many_arguments)]
@@ -549,7 +514,7 @@ fn dump_nondet(
         .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
-/// Read the NONDET tape as a list of `(seq, source, tag, payload)` tuples.
+
 #[pyfunction]
 fn read_nondet(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyList>> {
     let f = FlightFile::open(&path).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -561,7 +526,7 @@ fn read_nondet(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyList>> {
     Ok(PyList::new(py, out)?.into())
 }
 
-/// Read a `.flight` file and return a summary dict (used by `flight inspect`).
+
 #[pyfunction]
 fn read_summary(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
     let f = FlightFile::open(&path).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -599,7 +564,7 @@ fn read_summary(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
         d.set_item("event_count", ring.events.len())?;
         d.set_item("wrapped", ring.wrapped)?;
         d.set_item("code_count", ring.codes.len())?;
-        // The last few events, resolved to (kind, file, line), for a preview.
+
         let tail: Vec<(String, String, u32)> = ring
             .events
             .iter()
@@ -621,9 +586,7 @@ fn read_summary(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
     Ok(d.into())
 }
 
-/// Read the full crash detail from a `.flight` file: exception chain, frames
-/// with their locals, the object graph, and source texts. Used by the enriched
-/// `flight inspect` and, later, the TUI viewer.
+
 #[pyfunction]
 fn read_crash(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
     let f = FlightFile::open(&path).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -671,8 +634,7 @@ fn read_crash(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
     Ok(d.into())
 }
 
-/// Read the MUTATION log from a `.flight` file as a list of tuples
-/// `(seq, kind, name, key, (vkind, vrepr, vtype, vlen), file, qualname, line, frame)`.
+
 #[pyfunction]
 fn read_mutations(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyList>> {
     let f = FlightFile::open(&path).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -701,9 +663,7 @@ fn read_mutations(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyList>> {
     Ok(PyList::new(py, out)?.into())
 }
 
-/// Read up to `limit` most-recent ring events, resolved to
-/// `(kind, file, qualname, line)` in chronological order — the execution path
-/// leading up to the end, for the viewer's Events panel.
+
 #[pyfunction]
 fn read_events(py: Python<'_>, path: PathBuf, limit: usize) -> PyResult<Py<PyList>> {
     let f = FlightFile::open(&path).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -723,7 +683,7 @@ fn read_events(py: Python<'_>, path: PathBuf, limit: usize) -> PyResult<Py<PyLis
     Ok(PyList::new(py, out)?.into())
 }
 
-/// The Python module `flight._core`.
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(record, m)?)?;
@@ -748,7 +708,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_events, m)?)?;
     m.add_function(wrap_pyfunction!(read_nondet, m)?)?;
 
-    // Event kind discriminants, so Python names them instead of hard-coding.
+
     m.add("EVENT_PY_START", EventKind::PyStart as u8)?;
     m.add("EVENT_PY_RETURN", EventKind::PyReturn as u8)?;
     m.add("EVENT_LINE", EventKind::Line as u8)?;

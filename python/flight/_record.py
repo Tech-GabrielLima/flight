@@ -1,30 +1,3 @@
-"""Phase 2 — time-travel of scope: `with flight.record()`.
-
-Inside the scope we record **every state write** as a MUTATION, so afterwards
-you can ask "what was `x` at step t?" and "who mutated this dict?" — the
-event-sourcing model applied to program memory (VISION.md §10).
-
-**How writes are captured (the honest engineering choice).** The guide (§3.2)
-weighs three options: bytecode rewriting (exact but fragile across CPython
-releases), the `INSTRUCTION` event (robust but can't read the value just pushed
-on the stack), and container proxies (which break `type(x) is dict`). This
-implementation takes the robust, version-independent path: on each `LINE` event
-inside the scope we
-
-  * diff the frame's locals against the previous line → **local (re)binds**, and
-  * diff each `watch()`-ed object against its last snapshot → **container/attr
-    writes** — non-invasively, without ever subclassing or breaking `type()`.
-
-Both are line-granular. That is coarser than per-instruction capture but it is
-robust, needs no bytecode surgery, and delivers the headline Phase-2 powers:
-a per-variable value history, a reconstructable timeline, and "who mutated
-this". Finer granularity via native bytecode instrumentation is a documented
-future step (TECHNICAL.md §3.2, option A).
-
-Recording is opt-in and scope-delimited, so its cost is only paid around the
-code you are actually investigating (P2).
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -43,11 +16,9 @@ _DELETED_VALUE = ("deleted", "<deleted>", None, None)
 
 
 class _Watch:
-    """Tracks writes to one container/object by snapshot-diffing (option C, but
-    non-invasive: we never replace the object, so `type()` is untouched)."""
 
     def __init__(self, obj: Any, label: str):
-        self.obj = obj  # strong ref for the scope's lifetime
+        self.obj = obj
         self.label = label
         if isinstance(obj, dict):
             self.kind = "dict"
@@ -95,7 +66,6 @@ class _Watch:
 
 
 class _Scope:
-    """A live `with flight.record()` recording on one thread."""
 
     def __init__(self, session, path, scrubber: Scrubber):
         self.session = session
@@ -106,38 +76,25 @@ class _Scope:
         self.mutations: list = []
         self.truncated = False
         self._seq = 0
-        self._locals: dict[int, dict[str, int]] = {}  # id(frame) -> {name: id(value)}
-        self._prev_line: dict[int, int] = {}  # id(frame) -> last line event seen
+        self._locals: dict[int, dict[str, int]] = {}
+        self._prev_line: dict[int, int] = {}
         self.watches: list[_Watch] = []
         self.path_written: Optional[str] = None
 
-    # -- public (via flight.watch / the returned object) -------------------
 
     def watch(self, obj: Any, name: Optional[str] = None) -> Any:
-        """Track writes to `obj` for the rest of the scope. Returns `obj`."""
         label = name or _default_label(obj)
         self.watches.append(_Watch(obj, label))
         return obj
 
-    # -- capture (called from the LINE callback) ---------------------------
 
     def capture_line(self, code, line: int, frame) -> None:
-        # A LINE event fires *before* its line runs, so any change we see now
-        # was made by the previous line executed in this frame — attribute it
-        # there for an exact line, not one line late.
         fid = id(frame)
         attr = self._prev_line.get(fid, line)
         self._diff_frame(code, attr, frame, fid)
         self._prev_line[fid] = line
 
     def capture_return(self, code, frame) -> None:
-        """Final diff for a frame about to return or unwind.
-
-        Line-diff detects a write on the *next* LINE event in the frame — but a
-        function's last statement has no next LINE event, so its write would be
-        lost. Diffing once more at PY_RETURN/PY_UNWIND closes that gap; the last
-        line executed is `frame.f_lineno`, so attribution stays exact. We then
-        drop the frame's bookkeeping (it is exiting)."""
         if _thread_id() != self.owner:
             return
         fid = id(frame)
@@ -158,7 +115,7 @@ class _Scope:
             prev = self._locals.setdefault(fid, {})
             for name, value in list(cur.items()):
                 if name.startswith("__") and name.endswith("__"):
-                    continue  # skip dunder machinery locals
+                    continue
                 vid = id(value)
                 if prev.get(name) != vid:
                     prev[name] = vid
@@ -166,7 +123,6 @@ class _Scope:
         for w in self.watches:
             w.diff(self, code, attr_line, fid)
 
-    # -- emission ----------------------------------------------------------
 
     def _emit(self, kind, name, key, value, code, line, frame_id) -> None:
         scrub_name = key if key is not None else name
@@ -200,7 +156,6 @@ class _Scope:
             return True
         return False
 
-    # -- write on exit -----------------------------------------------------
 
     def write(self) -> Optional[str]:
         path = self.path
@@ -235,7 +190,6 @@ class _Scope:
 
 
 class _Recording:
-    """The context manager returned by :func:`record`."""
 
     def __init__(self, path=None, watch=()):
         self.path = path
@@ -256,8 +210,6 @@ class _Recording:
         self.scope = _Scope(session, self.path, scrubber)
         for obj in self._watch:
             self.scope.watch(obj)
-        # The frame running the `with` statement: its last block statement has
-        # no trailing LINE event, so we diff it once more in __exit__.
         self._entry_frame = sys._getframe(1)
         session._enter_scope(self.scope)
         return self.scope
@@ -283,30 +235,14 @@ class _Recording:
             from . import _install
 
             _install.uninstall()
-        return False  # never suppress the user's exception
+        return False
 
 
 def record(path=None, *, watch=()):
-    """Record every state write within the block into a `.flight`.
-
-        with flight.record() as rec:
-            rec.watch(cache)          # track a specific container too
-            run_the_suspect_code()
-        # -> writes a scope .flight; inspect its timeline with
-        #    `python -m flight timeline <file>`
-
-    `path` names the output file (default: a timestamped name); `watch` is an
-    optional iterable of objects to track from the start of the scope.
-    """
     return _Recording(path, watch)
 
 
 def watch(obj: Any, name: Optional[str] = None) -> Any:
-    """Track writes to `obj` in the currently active scope on this thread.
-
-    A no-op (returns `obj` unchanged) if called outside a `with flight.record()`
-    scope, so instrumentation left in code is harmless in production.
-    """
     from . import _install
 
     session = _install._active
@@ -315,9 +251,6 @@ def watch(obj: Any, name: Optional[str] = None) -> Any:
         if scope is not None:
             return scope.watch(obj, name)
     return obj
-
-
-# -- helpers ----------------------------------------------------------------
 
 
 def _thread_id() -> int:

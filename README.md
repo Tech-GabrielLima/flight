@@ -69,9 +69,19 @@ Three bets underpin the project (see [VISION.md](VISION.md)):
 **It is** a scoped, post-mortem recorder with a first-class viewer, evolving toward time-travel
 debugging. **It is not** an APM, a live debugger (that's `pdb`), or a profiler.
 
-## Status — all phases complete (0–10) ✅
+## Status — all phases complete (0–17) ✅
 
-The whole roadmap is done, end to end and fully tested — through Phase 10, the moonshot: **what-if
+The whole roadmap is done, end to end and fully tested — including the **second act, Phases 11–17**
+(see [the next leap](#the-next-leap--phases-1117) below): a dynamic **reverse slice** (`flight why` — why
+is this value what it is?), **`flight bisect`** (which commit introduced the bug — passively from a corpus,
+or actively by replaying against each commit), reproducer **generalization** (`flight generalize` — the
+boundary at which a value flips the failure), a **visual diff** page (`flight diff --html`) plus viewer
+deep-links, an **agentic fix that *proves* the patch** (`flight fix` — replays the tape with the fix applied
+and shows the crash is gone with no divergence), **what-if in the browser** (`flight view --serve`), and
+**fleet mode** (`flight serve` — a collector, index and dashboard aggregating thousands of black boxes with
+regression detection).
+
+Through Phase 10, the first moonshot: **what-if
 debugging** (`flight.what_if` — edit a value in the past and re-execute over the deterministic tape to see
 the counterfactual; see [what-if debugging](#what-if-debugging--phase-10) below). Phase 9 removed the
 friction around the shareable `.flight`: a **browser WASM viewer**, a **pytest plugin**, **`flight ci`** + a
@@ -163,7 +173,7 @@ around the code you're investigating (P2).
 surface (never bytes, P3):
 
 ```console
-$ pip install 'flight-recorder[viewer]'
+$ pip install 'pyflight[viewer]'
 $ python -m flight view flight-*.flight
 ```
 
@@ -477,7 +487,7 @@ $ python -m flight decrypt crash.flight.enc --passphrase "$KEY"
 ```
 
 AES-GCM needs a real cipher, so this depends on the **`cryptography`** package
-(`pip install 'flight-recorder[crypto]'`); without it the commands fail with a clear message rather than
+(`pip install 'pyflight[crypto]'`); without it the commands fail with a clear message rather than
 obscurely (the scrypt KDF and the envelope framing are stdlib-only).
 
 **A viewer in the browser — the growth loop.** The `.flight` is shareable, so it should be openable with
@@ -532,6 +542,104 @@ world — e.g. one more `random()` call — itself a finding), or it **never rea
 (reported, not ignored). The recorded non-determinism is held constant, so the counterfactual is
 reproducible. It's API, like `minimize`, and needs 3.13+ (it says so when it can't apply an override).
 
+## The next leap — Phases 11–17
+
+The second act builds on the same blocks (the event ring, frames, the object graph, mutations, the NONDET
+tape) and the reader's query surface — no `.flight` format change through Phase 16; only Phase 17 adds an
+index *outside* the file. Every piece declares its honest limits.
+
+### Dynamic reverse slice — Phase 11
+
+Point at a value and ask **why it is what it is**. `flight why` builds the minimal chain of writes and
+aliasings that produced it, receding to the origin — Weiser's backward slice, but from what *actually
+happened*. The identity-preserving object graph hands two **exact** edges for free: **aliasing** (the same
+object under another name/frame) and **containment** (the value *is* `datasets['evening']`); scope
+recordings add exact **write** edges; a crash-only fallback follows name-level **read-of** edges from the
+source AST, pruned by the event ring (a safe superset — never loses the cause).
+
+```console
+$ python -m flight why crash.flight --var numbers
+numbers ([]) — how this value came to be:
+  #0 compute_average  crash.py:26     parameter — its value comes from the caller (aliased below)
+       ↔ the SAME object as 'data' in summarize (frame #1)
+       ↰ is datasets['evening'] in main (frame #2)  (dict[3])
+  ⇒ root: 'datasets' was dict[3] in main (frame #2)
+```
+
+### `flight bisect` — Phase 12
+
+Which commit introduced the bug? **Passive** mode groups a corpus of black boxes by
+[`fingerprint`](#the-intelligence-layer--phase-7) and reports the earliest commit a fingerprint appears at
+(the commit rides the NONDET tape when you record with `flight.install(commit=True)`). **Active** mode
+generates a harness from the crash once, then binary-searches `good..bad`: at each commit it checks out the
+code into a throw-away `git worktree` and replays the recorded inputs+tape against **that commit's code** —
+reproduces → *bad*, clean → *good*, build/resolve failure → *skip*, exactly like `git bisect`.
+
+```console
+$ python -m flight bisect ./crashes --fingerprint 8f3a1c        # passive
+$ python -m flight bisect --repro crash.flight --good v1.2 --bad HEAD   # active
+culprit: e5f6a7b "off-by-one in refund()"  (14 commits tested)
+```
+
+### Reproducer generalization — Phase 13
+
+`ddmin` (Phase 6) isolates *which* recorded values matter; `flight generalize` finds the **boundary** at
+which each one flips the failure on and off — an exponential probe outward from the recorded value to a
+*passing* value, then a bisection to the exact transition. It emits a candidate guard and a Hypothesis
+scaffold; the passing example is verified by construction (replaying with it doesn't reproduce).
+
+```console
+$ python -m flight generalize crash.flight --property
+  random.randint → fails when ≥ 95 (passes at 94)
+     ⇒ candidate property: `assert n < 95` would guard the bug
+```
+
+### Visual diff + deep-links — Phase 15
+
+`flight diff --html a.flight b.flight -o diff.html` renders a **self-contained** side-by-side diff page (no
+external assets — attach it to a PR/issue) with the divergence point the CLI reports highlighted. The browser
+WASM viewer gains a **compare mode** (drop two files → the first divergence on the event axis, highlighted)
+and **URL-fragment deep-links** ("copy link to this view") — the link references a view, never the data (P5:
+the `.flight` never travels in the URL).
+
+### The agentic fix that *proves* the patch — Phase 16 (capstone)
+
+`flight fix` navigates the recording through read-only tools (frames, locals, aliases, the Phase-11 slice),
+proposes a **patch** (a unified diff against the embedded source), and then Flight **re-executes the
+deterministic tape with the patched code** to decide the verdict: crash gone **and** no boundary divergence →
+`VERIFIED`; crash gone **but** the tape diverges → `CHANGES_BEHAVIOR`; crash persists → `REJECTED` (the
+traceback is fed back for another attempt). This "does not reproduce **and** does not diverge" proof needs
+deterministic replay + a verifiable repro + the embedded source in one artifact — the convergence of Phases
+3–7. A deterministic heuristic provider proposes *and verifies* patches with no API key; `--llm` adds an
+Anthropic provider. The agent's tools are strictly read-only (P1/P3).
+
+```console
+$ python -m flight fix crash.flight
+  +    if not numbers:
+  +        return 0.0
+verification over the recorded tape:
+  ✓ the crash no longer reproduces
+  ✓ no boundary divergence (time/random/IO identical)
+  ⇒ FIX VERIFIED
+```
+
+### What-if in the browser — Phase 14
+
+`flight view --serve crash.flight` serves a **what-if console**: list the crash-frame locals, change one at a
+line, and see the real counterfactual — the Phase-10 `what_if` engine (with the function resolved in-process
+from the embedded source) run behind a `POST /whatif` endpoint. The recorded world is held constant, so the
+outcome is reproducible; it degrades honestly to "needs 3.13+" when a live-local override can't apply.
+
+### Fleet mode — Phase 17
+
+`flight serve ./store` runs a **collector + index + dashboard** aggregating thousands of black boxes:
+`POST /ingest` extracts `{fingerprint, exc_type, service, commit, trace_id}` into a SQLite index; the
+dashboard shows top fingerprints ("4,213× since Tuesday, ↑ new since deploy-42"), regression detection
+against recorded deploys, and the cross-service graph by `trace_id`. Sources report to it with a common
+`report_to=` (the WSGI/ASGI middleware wires it), and a privacy linter (`safe_to_send`) refuses to `POST` a
+black box with obvious unscrubbed secrets. It is the one phase that adds state *outside* the file — never
+inside it.
+
 ## Roadmap ahead — Phases 4–10
 
 The compass: **fidelity → experience → intelligence → reach**. Every phase keeps the five inviolables
@@ -570,18 +678,46 @@ The compass: **fidelity → experience → intelligence → reach**. Every phase
   counterfactual result, with the recorded world held constant. See
   [what-if debugging](#what-if-debugging--phase-10) above.
 
-## Install & build
+## Install
+
+For everyone — a prebuilt wheel, no Rust toolchain needed:
+
+```console
+pip install pyflight
+```
+
+Wheels are published for Linux, macOS (Intel + Apple Silicon) and Windows. The
+native core is built against CPython's **stable ABI (abi3)**, so **one wheel per
+platform** covers Python 3.12, 3.13 and every later 3.x — you don't wait for a
+new build when you upgrade Python. Optional extras: `pip install
+'pyflight[viewer]'` (the Textual TUI), `[crypto]` (at-rest encryption).
+
+### From source (contributors)
 
 Requires Python **3.12+** and a Rust toolchain.
 
 ```console
 python -m venv .venv && . .venv/bin/activate
-pip install maturin pytest textual   # textual is only needed for the TUI viewer
-maturin develop --release            # compiles the Rust core (release) and installs it into the venv
+pip install maturin pytest textual
+maturin develop --release            # compiles the Rust core (release), installs editable
 ```
 
 (Plain `maturin develop` builds Rust in debug mode — fine for iterating, ~10× slower on the hot path.
-Use `--release`, and release wheels for distribution.)
+Use `--release` for the real numbers.)
+
+### Publishing a release (maintainers)
+
+CI ([`.github/workflows/release.yml`](.github/workflows/release.yml)) builds wheels for all
+platforms + an sdist and publishes to PyPI on a version tag, via **PyPI Trusted
+Publishing** (OIDC — no API token is stored in the repo). One-time setup on
+PyPI: add a *pending publisher* for project `pyflight`, pointing at this
+repository, workflow `release.yml`, environment `pypi`. Then:
+
+```console
+git tag v0.0.2 && git push origin v0.0.2     # → CI builds every wheel and uploads to PyPI
+```
+
+`workflow_dispatch` runs the same build as a dry run (wheels as artifacts, no publish).
 
 ## Use
 
@@ -779,7 +915,13 @@ python/flight/
   _crypto.py       at-rest encryption of a .flight (AES-256-GCM, optional) (Phase 9)
   _web.py          WSGI/ASGI middleware: a .flight per HTTP 500 (Phase 9)
   _ci.py           flight ci: a Markdown root-cause comment for CI (Phase 9)
-  _whatif.py       what-if: re-execute the tape with a value changed (Phase 10)
+  _whatif.py       what-if: re-execute the tape with a value changed (Phase 10);
+                   run_whatif + the browser what-if console server (Phase 14)
+  _slice.py        dynamic reverse slice: `flight why` (Phase 11)
+  _bisect.py       `flight bisect`: passive corpus + active git-driven (Phase 12)
+  _generalize.py   reproducer generalization: `flight generalize` (Phase 13)
+  _agent.py        the agentic fix that proves the patch: `flight fix` (Phase 16)
+  _fleet.py        fleet mode: collector + index + dashboard, `flight serve` (Phase 17)
   _read.py, _cli.py, _config.py
 crates/flight-wasm/  the reader compiled to WebAssembly (raw C ABI) (Phase 9)
 viewer-wasm/       self-contained offline browser viewer (built by scripts/build-wasm.sh)

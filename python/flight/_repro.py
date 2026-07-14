@@ -1,20 +1,3 @@
-"""Phase 3, rung 1 — shallow reproduction (TECHNICAL.md §4.3).
-
-Given a crash `.flight`, generate a **self-contained, runnable** `repro_bug.py`
-that rebuilds the crash function's arguments from the object graph, imports the
-function from the (embedded) source, calls it, and asserts the same exception.
-Then *verify* it by running it in a subprocess: only a script that actually
-reproduces is labelled verified — the bug report that writes and checks itself.
-
-Honest scope: this reproduces bugs that depend on the function's arguments /
-local state (a large class of logic bugs). Values are the crash-time snapshots
-(a reassigned parameter shows its crash-time value); opaque objects become
-attribute-only stubs; truncated/redacted values can't be reconstructed exactly
-(the result is then flagged *approximate*). Bugs that depend on non-determinism
-(time, randomness, I/O) need the recorded NONDET tape — see [`_nondet`]; when the
-`.flight` carries one, the generated repro replays it too.
-"""
-
 from __future__ import annotations
 
 import json
@@ -32,7 +15,7 @@ _SCALAR_KINDS = {"int", "float", "bool", "none", "str", "bytes"}
 @dataclass
 class ReproResult:
     script: str
-    verified: Optional[bool] = None  # None = not run
+    verified: Optional[bool] = None
     approximate: bool = False
     reason: str = ""
     path: Optional[Path] = None
@@ -40,8 +23,6 @@ class ReproResult:
 
 
 class _Reconstructor:
-    """Emits Python that rebuilds an object graph, preserving aliasing and
-    surviving cycles (mutable containers are created empty, then filled)."""
 
     def __init__(self, objects: dict[int, dict]):
         self.objects = objects
@@ -51,7 +32,6 @@ class _Reconstructor:
         self.notes: list[str] = []
 
     def build(self, oid: int) -> str:
-        """Return a Python expression evaluating to the reconstructed object."""
         node = self.objects.get(oid)
         if node is None:
             self.approximate = True
@@ -60,7 +40,7 @@ class _Reconstructor:
         if kind in _SCALAR_KINDS:
             return self._scalar(node)
         if oid in self.var_of:
-            return self.var_of[oid]  # already built / being built (cycle/alias)
+            return self.var_of[oid]
         var = f"_v{len(self.var_of)}"
         self.var_of[oid] = var
         try:
@@ -95,10 +75,8 @@ class _Reconstructor:
                 if k is not None:
                     self.lines.append(f"setattr({var}, {k!r}, {self.build(cid)})")
             self.notes.append(f"{cls} rebuilt as an attribute-only stub")
-            # A stub carries the attributes but not the real type or methods.
             self.approximate = True
         else:
-            # ndarray / dataframe / adapter / redacted / truncated
             self.approximate = True
             self.lines.append(f"{var} = None  # {kind} not reconstructable")
 
@@ -135,7 +113,6 @@ def _looks_int(s: str) -> bool:
 
 
 def _key_literal(k) -> str:
-    """Best-effort literal for a dict key (keys were stringified at capture)."""
     if k is None:
         return "None"
     if _looks_int(k):
@@ -171,12 +148,8 @@ def _setup_lines(
     *, source: str, file: str, qualname: str, exc_type: str, build_lines: list[str],
     local_names: list[str], tape_json: Optional[str],
 ) -> list[str]:
-    """The shared body of a repro: embed the source, rebuild the crash-frame
-    state, resolve the function and its args, and define `_invoke`/`_attempt`.
-    Both the standalone script and the pytest test are this plus a tail."""
     parts = [_PREAMBLE, ""]
 
-    # The crash function's source, embedded and exec'd into a private module.
     parts.append(f"_SRC = {json.dumps(source)}")
     parts.append(f"_FILE = {json.dumps(file)}")
     parts.append("_mod = _types.ModuleType('_flight_crash')")
@@ -189,7 +162,6 @@ def _setup_lines(
     parts.append("    pass")
     parts.append("")
 
-    # Rebuild the crash frame's locals.
     parts.append("# --- reconstructed crash-frame state ---")
     parts.extend(build_lines)
     parts.append("_locals = {")
@@ -198,7 +170,6 @@ def _setup_lines(
     parts.append("}")
     parts.append("")
 
-    # Optional: replay the recorded non-determinism around the call.
     if tape_json is not None:
         parts.append("# --- recorded non-determinism (deterministic replay) ---")
         parts.append("try:")
@@ -208,7 +179,6 @@ def _setup_lines(
         parts.append("    _tape = None")
         parts.append("")
 
-    # Resolve and call the function.
     parts.append(f"_qualname = {json.dumps(qualname)}")
     parts.append("_fn = _mod")
     parts.append("for _part in _qualname.split('.'):")
@@ -261,9 +231,6 @@ def _render_script(**kw) -> str:
 
 
 def _render_pytest(**kw) -> str:
-    """A committable regression test: the same reconstruction, asserted with
-    `pytest.raises`. Also runnable as a script (its `__main__` self-verifies),
-    so the same file works under pytest and under the subprocess verifier."""
     exc_short = kw["exc_type"].split(".")[-1]
     parts = _setup_lines(**kw)
     parts.append("def test_regression():")
@@ -286,8 +253,6 @@ def _render_pytest(**kw) -> str:
 
 
 def build_repro(flight_path, *, include_tape: bool = True, pytest: bool = False) -> ReproResult:
-    """Generate (but do not write) a repro for a crash `.flight`. With
-    `pytest=True`, emit a committable regression test (`pytest.raises`)."""
     fl = read(flight_path)
     if not fl.has_crash:
         return ReproResult(script="", verified=False, reason="no crash frames in this file")
@@ -307,10 +272,9 @@ def build_repro(flight_path, *, include_tape: bool = True, pytest: bool = False)
     for name, oid in frame.locals:
         if name.startswith("__") and name.endswith("__"):
             continue
-        expr = rec.build(oid)  # appends any container-build lines to rec.lines
+        expr = rec.build(oid)
         ref_lines.append(f"{name}_ref = {expr}")
         local_names.append(name)
-    # Container/object builds must be emitted before the *_ref aliases.
     build_lines = rec.lines + ref_lines
 
     exc_type = crash.exceptions[0][0] if crash.exceptions else "Exception"
@@ -339,9 +303,6 @@ def build_repro(flight_path, *, include_tape: bool = True, pytest: bool = False)
 def write_repro(
     flight_path, out_path=None, *, verify: bool = True, pytest: bool = False
 ) -> ReproResult:
-    """Generate a repro, write it, and (optionally) verify it reproduces the
-    exception in a subprocess. With `pytest=True`, write a regression test
-    (default name `test_repro.py`); it self-verifies via its `__main__` block."""
     result = build_repro(flight_path, pytest=pytest)
     if not result.script:
         return result
