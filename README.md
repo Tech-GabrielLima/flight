@@ -714,7 +714,7 @@ PyPI: add a *pending publisher* for project `pyflight`, pointing at this
 repository, workflow `release.yml`, environment `pypi`. Then:
 
 ```console
-git tag v0.0.2 && git push origin v0.0.2     # → CI builds every wheel and uploads to PyPI
+git tag v0.0.3 && git push origin v0.0.3     # → CI builds every wheel and uploads to PyPI
 ```
 
 `workflow_dispatch` runs the same build as a dry run (wheels as artifacts, no publish).

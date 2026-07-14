@@ -36,7 +36,7 @@ from ._timetravel import Step, TimeTravel
 from ._web import FlightASGI, FlightWSGI
 from ._whatif import Outcome, Override, WhatIf, run_whatif, what_if
 
-__version__ = "0.0.2"
+__version__ = "0.0.3"
 
 __all__ = [
     "Adapted",

@@ -67,13 +67,7 @@ jobs:
     name: Publish to PyPI
     needs: [wheels, sdist]
     runs-on: ubuntu-latest
-    # Only publish on a version tag; workflow_dispatch runs are build-only (a dry run).
     if: startsWith(github.ref, 'refs/tags/')
-    environment:
-      name: pypi
-      url: https://pypi.org/p/pyflight
-    permissions:
-      id-token: write # OIDC token for PyPI Trusted Publishing — no stored secret
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -83,6 +77,6 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
-          # Don't fail if a file for this version is already on PyPI (e.g. a
-          # Linux wheel + sdist published earlier) — just add the missing ones.
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
           skip-existing: true
