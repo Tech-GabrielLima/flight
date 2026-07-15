@@ -1,17 +1,17 @@
-# flight — um gravador de voo para Python
+# flight — seu traceback diz onde; o flight diz por quê
 
 > **Idiomas:** [English](README.md) · **Português**
 >
 > **Docs:** [Visão & produto](VISION.md) · [Guia técnico](TECHNICAL.md) · [O formato `.flight`](docs/FORMAT.md)
 
-> Quando um programa Python morre, você não deveria receber um traceback e *boa sorte* — deveria
-> receber a **caixa-preta** completa do voo: cada passo que o código deu nos seus últimos instantes,
-> navegável, compartilhável e (no futuro) reexecutável no tempo.
+> Seu traceback diz **onde** o Python morreu. O flight diz **por quê**.
 >
-> flight é um **gravador post-mortem** feito para você poder deixar ligado: um ring buffer lock-free e
-> o writer do arquivo `.flight` vivem em **Rust** (via PyO3), alimentados pelo **`sys.monitoring`** do
-> CPython (PEP 669, 3.12+) para manter o overhead em regime baixo. Quando uma exceção não tratada
-> escapa, a gravação é despejada num arquivo `.flight` autodescritivo e tolerante a truncamento.
+> O flight deixa uma **caixa-preta** no seu programa. Quando ele morre, você recebe o último momento
+> inteiro — os locals de cada frame como um **grafo de objetos** de verdade — e pode fazer a pergunta que
+> o traceback não responde: **por que esse valor é o que é?** O flight rastreia até a origem e mostra onde
+> dois nomes são o **mesmo objeto** (`↔`). E vai além: **re-execute o crash gravado**, troque um valor pra
+> ver o que teria acontecido, e receba um `fix` que **se prova**. Sem reproduzir, sem breakpoints — um
+> arquivo compartilhável que você abre no navegador.
 
 ```console
 $ python -m flight run examples/crash.py

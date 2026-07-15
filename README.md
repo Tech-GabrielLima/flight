@@ -2,13 +2,15 @@
 
 <h1>✈&nbsp;&nbsp;flight</h1>
 
-<h3>When a Python program dies, get the <em>black box</em> — not just a traceback.</h3>
+<h3>Your traceback tells you <em>where</em> Python died. flight tells you <em>why</em>.</h3>
 
 <p>
-A post-mortem recorder you can actually leave on. A lock-free ring buffer and the <code>.flight</code>
-writer live in <b>Rust</b> (via PyO3), fed by CPython's <b><code>sys.monitoring</code></b> (PEP 669) so
-steady-state overhead stays low. When a crash escapes, it flushes a self-describing,
-truncation-tolerant <b>black box</b> you can open, share, and replay in time.
+flight leaves a <b>black box</b> on your program. When it dies you get the whole last moment — every
+frame's locals as a real <b>object graph</b> — and you can ask the question a traceback can't:
+<b>why is this value what it is?</b> flight traces it back to its origin and shows where two names are the
+<b>same object</b> (<code>↔</code>). Then it goes further: <b>re-run the recorded crash</b>, change a value
+to see what would have happened, and get a fix that <b>proves itself</b>. No reproduction, no breakpoints —
+one shareable file you open in your browser.
 </p>
 
 <p>
