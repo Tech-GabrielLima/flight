@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "pyflight"
-version = "0.0.3"
+version = "0.0.4"
 description = "A flight recorder for Python: when a program dies, get the black box, not just a traceback."
 readme = "README.md"
 license = { text = "MIT" }
