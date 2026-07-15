@@ -1,6 +1,7 @@
 use flight_format::BlockType;
 use flight_reader::FlightFile;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
 
 #[no_mangle]
@@ -87,14 +88,73 @@ fn summary(f: &FlightFile) -> Value {
         .map(|e| json!({ "type": e.exc_type, "message": e.message, "relation": e.relation }))
         .collect();
 
-    let frames: Vec<Value> = f
-        .frames()
-        .into_iter()
-        .map(|fr| json!({
-            "qualname": fr.qualname, "file": fr.file,
-            "lineno": fr.lineno, "first_lineno": fr.first_lineno,
-            "locals": fr.locals.len(),
-        }))
+    let omap = f.object_map();
+    let raw_frames = f.frames();
+    let mut alias_ct: HashMap<u64, usize> = HashMap::new();
+    for fr in &raw_frames {
+        for (_, id) in &fr.locals {
+            *alias_ct.entry(*id).or_insert(0) += 1;
+        }
+    }
+    let srcs = f.sources();
+    let source_text = |file: &str| -> Option<&String> {
+        srcs.iter()
+            .find(|s| s.filename == file)
+            .or_else(|| {
+                let b = file.rsplit('/').next().unwrap_or(file);
+                srcs.iter().find(|s| s.filename.rsplit('/').next().unwrap_or("") == b)
+            })
+            .map(|s| &s.text)
+    };
+
+    let frames: Vec<Value> = raw_frames
+        .iter()
+        .map(|fr| {
+            let locals: Vec<Value> = fr
+                .locals
+                .iter()
+                .map(|(name, id)| {
+                    let (val, ty) = match omap.get(id) {
+                        Some(n) => {
+                            let ty = n.type_name.clone().unwrap_or_else(|| n.kind.clone());
+                            let val = match &n.repr {
+                                Some(r) if !r.is_empty() => r.clone(),
+                                _ => match n.length {
+                                    Some(l) => format!("{}[{}]", n.kind, l),
+                                    None => n.kind.clone(),
+                                },
+                            };
+                            (val, ty)
+                        }
+                        None => ("<unavailable>".to_string(), "?".to_string()),
+                    };
+                    json!({
+                        "name": name, "value": val, "type": ty,
+                        "aliased": alias_ct.get(id).copied().unwrap_or(0) > 1,
+                    })
+                })
+                .collect();
+
+            let mut window: Vec<Value> = Vec::new();
+            if let Some(text) = source_text(&fr.file) {
+                let lines: Vec<&str> = text.split('\n').collect();
+                let ln = fr.lineno as usize;
+                if ln >= 1 && ln <= lines.len() {
+                    let start = ln.saturating_sub(4).max(1);
+                    let end = (ln + 3).min(lines.len());
+                    for n in start..=end {
+                        window.push(json!({ "n": n, "text": lines[n - 1], "crash": n == ln }));
+                    }
+                }
+            }
+
+            json!({
+                "qualname": fr.qualname, "file": fr.file,
+                "lineno": fr.lineno, "first_lineno": fr.first_lineno,
+                "locals": locals,
+                "source": window,
+            })
+        })
         .collect();
 
     json!({

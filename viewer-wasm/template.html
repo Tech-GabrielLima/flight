@@ -250,6 +250,76 @@
     background:rgba(140,170,210,.08); }
   .headline.bad { background:rgba(255,123,114,.14); color:var(--bad); }
 
+  /* ---- rich inspect view ---- */
+  .crashhero { border-color:rgba(255,123,114,.3);
+    background:linear-gradient(180deg,rgba(44,20,22,.5),rgba(16,22,34,.6)); }
+  .ch-badge { font-family:var(--sans); font-size:11px; letter-spacing:.13em; text-transform:uppercase; color:var(--faint); }
+  .ch-exc { font-family:var(--mono); font-size:clamp(18px,3vw,23px); margin:9px 0 8px; line-height:1.3; word-break:break-word; }
+  .ch-exc .type { color:var(--bad); font-weight:700; text-shadow:0 0 26px rgba(255,123,114,.4); }
+  .ch-loc { font-family:var(--mono); color:var(--dim); font-size:14px; }
+  .ch-loc b { color:var(--ink); } .ch-loc a { color:var(--accent); }
+  .pill { display:inline-block; font-family:var(--sans); font-size:10.5px; font-weight:600;
+    padding:2px 9px; border-radius:999px; margin-left:8px; vertical-align:middle; letter-spacing:.02em; }
+  .pill.user { background:rgba(74,222,128,.14); color:#8ff0b0; border:1px solid rgba(74,222,128,.3); }
+  .pill.lib { background:rgba(140,170,210,.1); color:var(--dim); border:1px solid rgba(140,170,210,.18); }
+  .pill.crash { background:rgba(255,123,114,.16); color:#ffb3ad; border:1px solid rgba(255,123,114,.32); }
+
+  .diag { border-color:rgba(88,166,255,.22);
+    background:linear-gradient(180deg,rgba(16,26,44,.6),rgba(12,18,28,.6)); }
+  .diag .cause { font-family:var(--sans); font-size:15px; color:#dbe9ff; line-height:1.65; }
+  .diag .cause .ic { color:var(--accent); margin-right:6px; }
+  .diag .cause code, .suspects code { background:rgba(88,166,255,.1); border:1px solid rgba(88,166,255,.18);
+    color:#bcd9ff; padding:0 5px; border-radius:5px; font-size:.9em; }
+  .suspects { list-style:none; padding:0; margin:14px 0 0; }
+  .suspects li { font-family:var(--mono); font-size:13px; padding:7px 11px; border-radius:9px;
+    background:rgba(245,196,81,.08); border:1px solid rgba(245,196,81,.22); margin:6px 0; }
+  .suspects .nm { color:var(--accent); } .suspects .why { color:var(--warn); }
+  .diag .more { font-family:var(--sans); color:var(--faint); font-size:12.5px; margin-top:14px; }
+  .diag .more code { background:rgba(140,170,210,.1); padding:1px 6px; border-radius:5px; color:#9fc6ff; }
+
+  .srcpath { font-family:var(--mono); color:var(--dim); font-size:12.5px; margin-bottom:9px; }
+  .srcview { font-family:var(--mono); font-size:13px; border-radius:10px; overflow:hidden;
+    border:1px solid rgba(140,170,210,.1); background:rgba(9,13,20,.5); }
+  .srcview .line { display:grid; grid-template-columns:52px 1fr; }
+  .srcview .line .lno { text-align:right; padding:2px 12px 2px 0; color:var(--faint);
+    background:rgba(255,255,255,.02); user-select:none; }
+  .srcview .line code { padding:2px 12px; white-space:pre; overflow-x:auto; color:#cdd9e8; }
+  .srcview .line.crash { background:rgba(255,123,114,.13); }
+  .srcview .line.crash .lno { color:var(--bad); background:rgba(255,123,114,.16); box-shadow:inset 3px 0 0 var(--bad); }
+  .srcview .line.crash code { color:#ffd7d2; }
+
+  .localtab { width:100%; border-collapse:collapse; margin-top:14px; font-family:var(--mono); font-size:13px; }
+  .localtab td { padding:6px 10px; border-bottom:1px solid rgba(140,170,210,.07); vertical-align:top; }
+  .localtab tr:last-child td { border-bottom:none; }
+  .localtab .nm { color:var(--accent); white-space:nowrap; }
+  .localtab .ty { color:var(--faint); white-space:nowrap; }
+  .localtab .alias { color:var(--cyan); cursor:help; }
+  .localtab tr.suspect td { background:rgba(245,196,81,.07); }
+  .localtab tr.suspect .why { color:var(--warn); }
+
+  details.frame { border:1px solid rgba(140,170,210,.1); border-radius:11px; margin:8px 0;
+    background:rgba(14,20,32,.5); overflow:hidden; }
+  details.frame > summary { cursor:pointer; padding:10px 14px; display:flex; align-items:center; gap:10px;
+    font-family:var(--mono); font-size:13px; list-style:none; }
+  details.frame > summary::-webkit-details-marker { display:none; }
+  details.frame > summary:hover { background:rgba(88,166,255,.05); }
+  details.frame > summary .idx { color:var(--faint); }
+  details.frame > summary .qn { color:var(--accent); font-weight:600; }
+  details.frame > summary .wh { color:var(--dim); margin-left:auto; white-space:nowrap; }
+  details.frame[open] > summary { border-bottom:1px solid rgba(140,170,210,.1); background:rgba(88,166,255,.05); }
+  details.frame .fbody { padding:12px 14px; }
+  details.libgroup { margin:8px 0; }
+  details.libgroup > summary { cursor:pointer; color:var(--dim); font-family:var(--sans); font-size:13px;
+    padding:9px 12px; border:1px dashed rgba(140,170,210,.18); border-radius:10px; list-style:none; }
+  details.libgroup > summary::-webkit-details-marker { display:none; }
+  details.libgroup > summary::before { content:'▸ '; color:var(--faint); }
+  details.libgroup[open] > summary::before { content:'▾ '; }
+  details.detcard > summary { cursor:pointer; list-style:none; }
+  details.detcard > summary::-webkit-details-marker { display:none; }
+  details.detcard > summary h2 { display:inline; margin:0; }
+  details.detcard > summary::after { content:' ▸'; color:var(--faint); }
+  details.detcard[open] > summary::after { content:' ▾'; }
+
   footer { color:var(--faint); text-align:center; padding:30px 20px 40px; font-size:12px;
     border-top:1px solid rgba(140,170,210,.08); margin-top:24px; }
   footer code { color:var(--dim); }
@@ -823,47 +893,158 @@ function writeHash(patch) {
   location.hash = h.toString();
 }
 
-// -- single-file summary ----------------------------------------------------
+// -- classification & heuristics (client-side, offline) ---------------------
+const LIBRE = /(^<)|site-packages|dist-packages|[\/\\]lib[\/\\]python|[\/\\]lib[\/\\]pypy|(^|[\/\\])runpy|[\/\\]flight[\/\\]|(^|[\/\\])_cli\.py$|(^|[\/\\])__main__\.py$/;
+const isUser = file => !!file && !LIBRE.test(file);
+
+// A value that is empty / zero / None is the usual suspect at a crash.
+function suspicion(v) {
+  if (v == null) return null;
+  if (/\[0\]$/.test(v)) return 'empty';
+  if (v === 'None') return 'is None';
+  if (v === '0' || v === '0.0' || /^0+(\.0+)?$/.test(v)) return 'is zero';
+  if (v === "''" || v === '""') return 'empty string';
+  return null;
+}
+
+// Plain-language cause + a candidate guard, from the exception + crash locals.
+function diagnose(exc, crash) {
+  const t = exc.type || '', m = exc.message || '';
+  const empty = crash && (crash.locals || []).find(l => /\[0\]$/.test(l.value));
+  const en = empty ? esc(empty.name) : null;
+  switch (t) {
+    case 'ZeroDivisionError': return {
+      cause: `A value was <b>divided by zero</b>. The denominator evaluated to 0 — most often <code>len(x)</code> on an empty collection${en?` (see <code>${en}</code>)`:''}, or a counter that never left 0.`,
+      fix: `<span class="c"># guard the empty / zero case before dividing</span>\n<span class="kw">if not</span> ${en||'denominator'}:\n    <span class="kw">return</span> 0.0` };
+    case 'IndexError': return {
+      cause: `An <b>index was out of range</b> — the sequence was shorter than the code assumed${en?` (<code>${en}</code> is empty)`:''}.`,
+      fix: `<span class="kw">if</span> ${en||'seq'}:\n    value = ${en||'seq'}[i]` };
+    case 'KeyError': return {
+      cause: `The key <code>${esc(m)}</code> was <b>missing from a dict</b>.`,
+      fix: `value = d.get(${esc(m)}, default)   <span class="c"># or: if ${esc(m)} in d: ...</span>` };
+    case 'AttributeError': return {
+      cause: /NoneType/.test(m)
+        ? `A value was <b>None</b> where an object was expected — a call above probably returned <code>None</code> instead of a real value.`
+        : `The object <b>didn't have the attribute</b> the code asked for — <span class="muted">${esc(m)}</span>.`, fix: null };
+    case 'TypeError': return {
+      cause: /NoneType/.test(m)
+        ? `A <b>None</b> slipped into an operation that needed a real value — <span class="muted">${esc(m)}</span>.`
+        : `A value had the <b>wrong type</b> for this operation — <span class="muted">${esc(m)}</span>.`, fix: null };
+    case 'ValueError': return { cause: `Right type, <b>invalid value</b> — <span class="muted">${esc(m)}</span>.`, fix: null };
+    case 'FileNotFoundError': return { cause: `A file or path <b>didn't exist</b> when opened — <span class="muted">${esc(m)}</span>.`, fix: null };
+    case 'RecursionError': return { cause: `<b>Infinite recursion</b> — a base case is missing or never reached.`, fix: null };
+    case 'StopIteration': return { cause: `An iterator was <b>exhausted</b> — <code>next()</code> was called with nothing left.`, fix: null };
+    default: return { cause: `<b>${esc(t)}</b>${m?`: ${esc(m)}`:''}. The highlighted locals below are the usual suspects.`, fix: null };
+  }
+}
+
+function srcHtml(f) {
+  return `<div class="srcview">` + (f.source||[]).map(l =>
+    `<div class="line${l.crash?' crash':''}"><span class="lno">${l.n}</span><code>${esc(l.text)||' '}</code></div>`
+  ).join('') + `</div>`;
+}
+function localsHtml(f) {
+  const ls = f.locals || [];
+  if (!ls.length) return `<div class="muted" style="margin-top:12px">no locals captured</div>`;
+  return `<table class="localtab">` + ls.map(l => {
+    const s = suspicion(l.value);
+    return `<tr class="${s?'suspect':''}"><td class="nm">${esc(l.name)}</td>` +
+      `<td>${esc(l.value)}${l.aliased?' <span class="alias" title="the same object appears in another frame">↔</span>':''}</td>` +
+      `<td class="ty">${esc(l.type)}</td><td class="why">${s?esc(s):''}</td></tr>`;
+  }).join('') + `</table>`;
+}
+function frameBlock(f, i, isCrash) {
+  return `<details class="frame" data-i="${i}"${isCrash?' open':''}>
+    <summary><span class="idx">#${i}</span><span class="qn">${esc(f.qualname)}</span>` +
+      `${isCrash?'<span class="pill crash">crash</span>':''}` +
+      `<span class="wh">${esc(base(f.file))}:${f.lineno}</span></summary>
+    <div class="fbody">${(f.source&&f.source.length)?srcHtml(f):'<div class="muted">source not captured for this frame</div>'}${localsHtml(f)}</div>
+  </details>`;
+}
+
+// -- single-file inspect view -----------------------------------------------
 function render(s, name) {
   const out = document.getElementById('out');
   if (s.error) { out.innerHTML = `<div class="card err">Could not parse: ${esc(s.error)}</div>`; return; }
+  const frames = s.frames || [];
+  const exc = (s.exceptions || [])[0];
+  let ci = frames.findIndex(f => isUser(f.file));
+  if (ci < 0) ci = 0;
+  const crash = frames[ci];
   let html = '';
-  html += `<div class="card"><h2>${esc(name)}</h2>
-    <div class="kv">format v<b>${s.format_version}</b> · written by flight <b>${esc(s.flight_version||'?')}</b>
-    · ${s.partial ? '<span class="err">PARTIAL</span>' : 'complete'} · ${s.used_index ? 'indexed' : 'linear-scan'}</div>
-    <div class="chips" style="margin-top:8px">${(s.blocks||[]).map(b=>`<span>${esc(b)}</span>`).join('')}</div></div>`;
 
-  if (s.exceptions && s.exceptions.length) {
-    html += `<div class="card"><h2>Exception</h2>`;
-    s.exceptions.forEach((e,i) => {
-      const rel = i===0 ? '' : ` <span class="muted">(${esc(e.relation)})</span>`;
-      html += `<div class="exc"><span class="type">${esc(e.type)}</span>: ${esc(e.message)}${rel}</div>`;
+  // 1 — the headline: what died, and where in YOUR code
+  if (exc) {
+    html += `<div class="card crashhero"><div class="ch-badge">post-mortem · ${esc(name)}</div>
+      <div class="ch-exc"><span class="type">${esc(exc.type)}</span>: ${esc(exc.message)}</div>`;
+    if (crash) html += `<div class="ch-loc">in <b>${esc(crash.qualname)}</b> · ` +
+      `<a href="#" data-frame="${ci}">${esc(base(crash.file))}:${crash.lineno}</a>` +
+      `${isUser(crash.file)?'<span class="pill user">your code</span>':'<span class="pill lib">library</span>'}</div>`;
+    html += `</div>`;
+  } else {
+    html += `<div class="card"><h2>Recording</h2><div class="kv">No uncaught exception — this looks like a scope
+      or deterministic recording. ${s.event_count} events across ${s.code_count} code objects.</div></div>`;
+  }
+
+  // 2 — how to fix (heuristic, offline)
+  if (exc) {
+    const d = diagnose(exc, crash);
+    const suspects = crash ? (crash.locals||[]).map(l => [l, suspicion(l.value)]).filter(x => x[1]) : [];
+    html += `<div class="card diag"><h2>How to fix</h2><div class="cause"><span class="ic">◆</span>${d.cause}</div>`;
+    if (suspects.length) html += `<ul class="suspects">` + suspects.map(([l, why]) =>
+      `<li><span class="nm">${esc(l.name)}</span> = ${esc(l.value)} <span class="why">— ${esc(why)}</span></li>`).join('') + `</ul>`;
+    if (d.fix) html += `<pre><code>${d.fix}</code></pre>`;
+    html += `<div class="more">Confirm the cause with <code>flight why --var &lt;name&gt;</code>, or let flight
+      propose <em>and verify</em> a patch over the recorded tape with <code>flight fix</code>.</div></div>`;
+  }
+
+  // 3 — where it happened: the crash frame's source + locals
+  if (crash && crash.source && crash.source.length) {
+    html += `<div class="card"><h2>Where it happened</h2>
+      <div class="srcpath">${esc(crash.qualname)} — ${esc(base(crash.file))}:${crash.lineno}</div>
+      ${srcHtml(crash)}${localsHtml(crash)}</div>`;
+  }
+
+  // 4 — the full call stack, your code first, runtime folded away
+  if (frames.length) {
+    html += `<div class="card"><h2>Call stack — ${frames.length} frames</h2>`;
+    let buf = [];
+    const flush = () => { if (buf.length) { html +=
+      `<details class="libgroup"><summary>${buf.length} runtime / library frame${buf.length>1?'s':''}</summary>${buf.join('')}</details>`;
+      buf = []; } };
+    frames.forEach((f, i) => {
+      const block = frameBlock(f, i, i === ci);
+      if (isUser(f.file)) { flush(); html += block; } else { buf.push(block); }
     });
+    flush();
     html += `</div>`;
   }
-  if (s.frames && s.frames.length) {
-    html += `<div class="card"><h2>Frames (crash first)</h2><table>
-      <tr><th>#</th><th>function</th><th>where</th><th>locals</th></tr>`;
-    s.frames.forEach((f,i) => {
-      html += `<tr><td class="muted">${i}</td><td class="k">${esc(f.qualname)}</td>
-        <td class="where">${esc(base(f.file))}:${f.lineno}</td><td class="muted">${f.locals}</td></tr>`;
-    });
-    html += `</table></div>`;
-  }
-  if (s.meta) {
-    html += `<div class="card"><h2>Environment</h2>
-      <div class="kv">runtime <b>${esc(s.meta.python_version||'?')}</b> · platform <b>${esc(s.meta.platform||'?')}</b></div>
-      <div class="kv">cwd ${esc(s.meta.cwd||'?')}</div>
-      <div class="kv">argv ${esc((s.meta.argv||[]).join(' '))}</div></div>`;
-  }
-  html += `<div class="card"><h2>Events — ${s.event_count} across ${s.code_count} code objects${s.wrapped?' (ring wrapped)':''}</h2>`;
-  if (s.recent_events && s.recent_events.length) {
-    html += `<ul class="events">` + s.recent_events.map(e =>
-      `<li><span class="kind">${esc(e.kind)}</span> <span class="k">${esc(e.qualname||'?')}</span>
-       <span class="where">${esc(base(e.file)||'')}${e.line?(':'+e.line):''}</span></li>`).join('') + `</ul>`;
-  } else { html += `<div class="muted">no ring events</div>`; }
-  html += `</div>`;
+
+  // 5 — everything else, folded
+  html += `<details class="card detcard"${exc?'':' open'}><summary><h2>Recording details</h2></summary>
+    <div class="chips" style="margin:12px 0">${(s.blocks||[]).map(b=>`<span>${esc(b)}</span>`).join('')}</div>
+    <div class="kv">format v<b>${s.format_version}</b> · written by flight <b>${esc(s.flight_version||'?')}</b>
+      · ${s.partial?'<span class="err">PARTIAL</span>':'complete'} · ${s.used_index?'indexed':'linear-scan'}</div>`;
+  if (s.meta) html += `<div class="kv" style="margin-top:8px">runtime <b>${esc(s.meta.python_version||'?')}</b>
+      · platform <b>${esc(s.meta.platform||'?')}</b></div>
+    <div class="kv">cwd ${esc(s.meta.cwd||'?')}</div><div class="kv">argv ${esc((s.meta.argv||[]).join(' '))}</div>`;
+  html += `<div class="kv" style="margin-top:12px">Events — ${s.event_count} across ${s.code_count} code objects${s.wrapped?' (ring wrapped)':''}</div>`;
+  if (s.recent_events && s.recent_events.length) html += `<ul class="events">` + s.recent_events.slice(0,80).map(e =>
+    `<li><span class="kind">${esc(e.kind)}</span> <span class="k">${esc(e.qualname||'?')}</span>
+     <span class="where">${esc(base(e.file)||'')}${e.line?(':'+e.line):''}</span></li>`).join('') + `</ul>`;
+  html += `</details>`;
+
   out.innerHTML = html;
+
+  // clicking the headline location jumps to that frame in the stack
+  out.querySelectorAll('[data-frame]').forEach(a => a.addEventListener('click', e => {
+    e.preventDefault();
+    const d = out.querySelector(`details.frame[data-i="${a.dataset.frame}"]`);
+    if (d) {
+      const g = d.closest('details.libgroup'); if (g) g.open = true;
+      d.open = true; d.scrollIntoView({ block:'center' });
+    }
+  }));
 }
 
 // -- two-file compare (event-ring axis, first divergence highlighted) -------

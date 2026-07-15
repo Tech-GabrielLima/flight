@@ -79,7 +79,7 @@ um `.flight` e o crash é interpretado **no seu navegador**, offline — nada é
 compartilhável que sustenta o projeto inteiro: *"abra isto e você vai ver tudo."*
 
 <div align="center">
-<img alt="o viewer WASM no navegador: um .flight real interpretado offline, mostrando a exceção e a pilha de frames (crash primeiro)"
+<img alt="o viewer WASM no navegador: um .flight real interpretado offline — o crash, um 'como resolver' heurístico e a linha de código destacada"
      width="820"
      src="https://raw.githubusercontent.com/Tech-GabrielLima/flight/main/assets/viewer.png">
 </div>
