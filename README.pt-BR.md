@@ -314,6 +314,31 @@ por-linha é um custo de cauda que você paga só enquanto investiga. Reproduza 
 `python benchmarks/web_overhead.py`. Detalhes no [README](README.md#overhead--the-honest-picture) e em
 [TECHNICAL.md](TECHNICAL.md) §0.2.
 
+## Confiabilidade sob morte violenta
+
+O formato `.flight` foi *desenhado* para sobreviver a truncamento — mas "desenhado para" ≠ "testado sob".
+O writer é **streaming e append-only** (`File::create` + blocos sequenciais, sem temp-and-rename), então
+os bytes em disco depois de um processo morto durante a escrita são sempre um **prefixo** do arquivo. Dois
+harnesses em [`benchmarks/fault_injection.py`](benchmarks/fault_injection.py) transformam a promessa num
+número auditável — cada leitura roda num **subprocesso isolado**, então um crash do reader (segfault,
+abort, panic) vira exit≠0, não um falso "passou":
+
+- **`kill -9` real durante a escrita** — um processo grava um crash grande em loop e o pai o mata no meio.
+- **Truncamento exaustivo** — gravações reais lidas em *todo prefixo de byte* (o superconjunto de qualquer
+  estado que uma morte poderia deixar).
+
+Execução de referência (Python 3.13, Linux):
+
+| harness | leituras | crashes do reader |
+|---|---:|---:|
+| `SIGKILL` durante a escrita (700 mortes) | 457 arquivos em disco (456 completos, 1 parcial, 41 vazios) | **0** |
+| truncamento em todo prefixo de byte | 7.957 prefixos (7.803 `partial`, 139 erros graciosos) | **0** |
+| **total** | **8.414** | **0** |
+
+Todo arquivo corrompido ou foi lido, ou degradou para `partial`, ou deu erro gracioso — **o reader nunca
+quebrou**. Uma versão rápida roda no CI ([`tests/test_fault_injection.py`](tests/test_fault_injection.py)).
+Reproduza com `python benchmarks/fault_injection.py`.
+
 ## Testes
 
 ```console

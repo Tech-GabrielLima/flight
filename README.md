@@ -955,6 +955,32 @@ floor: ~40 ns you cannot remove, ~25 ns of actual work (lock-free ring + lock-fr
 - **P4 — Every phase is useful on its own.**
 - **P5 — Privacy by design.** Redaction of sensitive fields is a Phase-1 feature, not a later patch.
 
+## Reliability under violent death
+
+The `.flight` format is designed to survive truncation — but *designed for* is not *tested under*. The
+writer is **streaming and append-only** (`File::create`, then sequential blocks — no temp-and-rename), so
+the bytes on disk after a process is killed mid-write are always a **prefix** of the file. Two harnesses in
+[`benchmarks/fault_injection.py`](benchmarks/fault_injection.py) turn the robustness claim into an
+auditable number. Every read runs in an **isolated subprocess**, so a reader crash (segfault, abort,
+uncaught panic) surfaces as a non-zero exit — not a silent pass:
+
+- **Real `kill -9` during the write.** A process records a large crash and writes it in a loop; the parent
+  `SIGKILL`s it mid-write. Whatever landed on disk is then parsed.
+- **Exhaustive truncation.** Real recordings (a crash, a deterministic run, a big crash) are fed to the
+  reader at *every byte prefix* — the complete superset of every state any kill could leave.
+
+Reference run (Python 3.13, Linux):
+
+| harness | reads | reader crashes |
+|---|---:|---:|
+| `SIGKILL` mid-write (700 kills) | 457 on-disk files (456 complete, 1 partial, 41 empty) | **0** |
+| truncation at every byte prefix | 7,957 prefixes (7,803 `partial`, 139 graceful errors) | **0** |
+| **total** | **8,414** | **0** |
+
+Every corrupt file either parsed, degraded to `partial`, or raised a graceful error — **the reader never
+crashed**. A fast version runs in CI ([`tests/test_fault_injection.py`](tests/test_fault_injection.py)).
+Reproduce with `python benchmarks/fault_injection.py`.
+
 ## Tests
 
 **2161 Python tests** (2151 pass; 10 skip only for a missing optional dependency — `numpy`, `pandas` — or

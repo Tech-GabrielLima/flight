@@ -41,6 +41,26 @@ Reference run (Python 3.13, Linux; 8 threads; 8 clients; 12,000 requests; n=60):
 Default black-box mode is within measurement noise at p50/p99; per-line is a tail cost you pay only while
 investigating.
 
+## `fault_injection.py` — reliability under violent death
+
+Turns "designed to survive truncation" into an auditable number. The writer is streaming and append-only,
+so the on-disk bytes after a kill are always a prefix of the file. Two harnesses, each reading every
+corrupt file in an **isolated subprocess** so a reader crash is a non-zero exit, not a silent pass:
+
+- **`kill -9` mid-write** — a process records a large crash and writes it in a loop; the parent SIGKILLs
+  it while it writes; whatever hit disk is parsed.
+- **Exhaustive truncation** — real recordings fed to the reader at every byte prefix (the superset of
+  every state any kill could leave).
+
+```console
+python benchmarks/fault_injection.py            # ~700 SIGKILLs + every byte prefix
+python benchmarks/fault_injection.py --quick    # smaller
+```
+
+Reference run (Python 3.13, Linux): **8,414 reads of killed/truncated `.flight` files, 0 reader crashes** —
+every one parsed, went `partial`, or errored gracefully. A fast version is enforced in CI
+(`tests/test_fault_injection.py`).
+
 ## `../scripts/bench.py` — per-event cost (microbenchmark)
 
 The steady-state per-event floor (`~65 ns` for a fully recorded event, `~40 ns` of which is
