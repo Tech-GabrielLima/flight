@@ -37,7 +37,6 @@ fn sample_ring(n: u64) -> RingPayload {
     }
 }
 
-
 fn write_full_file() -> Vec<u8> {
     let mut buf = Vec::new();
     let mut w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
@@ -67,7 +66,6 @@ fn clean_file_roundtrips_via_index() {
 
 #[test]
 fn footerless_file_roundtrips_via_scan() {
-
     let mut buf = Vec::new();
     let mut w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
     w.write_block_named(BlockType::Meta, &sample_meta())
@@ -91,7 +89,6 @@ fn footerless_file_roundtrips_via_scan() {
 fn truncation_at_every_byte_never_panics_and_degrades_monotonically() {
     let bytes = write_full_file();
 
-
     for cut in 0..bytes.len() {
         let sliced = &bytes[..cut];
         match FlightFile::from_bytes(sliced) {
@@ -102,7 +99,6 @@ fn truncation_at_every_byte_never_panics_and_degrades_monotonically() {
             Ok(f) => {
                 assert!(f.blocks.len() <= 2);
 
-
                 if f.blocks.len() < 2 {
                     assert!(f.partial || cut < bytes.len());
                 }
@@ -110,10 +106,8 @@ fn truncation_at_every_byte_never_panics_and_degrades_monotonically() {
         }
     }
 
-
     let full = FlightFile::from_bytes(&bytes).unwrap();
     let last_data_end = {
-
         let n = bytes.len();
         let index_total =
             u32::from_le_bytes([bytes[n - 8], bytes[n - 7], bytes[n - 6], bytes[n - 5]]) as usize;
@@ -193,7 +187,6 @@ fn corrupt_trailer_falls_back_to_scan() {
     let f = FlightFile::from_bytes(&bytes).unwrap();
     assert!(!f.used_index);
 
-
     assert_eq!(f.meta().unwrap(), sample_meta());
     assert_eq!(f.event_ring().unwrap(), sample_ring(100));
 }
@@ -219,7 +212,6 @@ fn trailer_magic_constant_matches_writer_output() {
     let bytes = write_full_file();
     assert_eq!(&bytes[bytes.len() - 4..], TRAILER_MAGIC);
 }
-
 
 #[test]
 fn crash_blocks_roundtrip_and_aliasing_resolves() {
@@ -310,7 +302,6 @@ fn crash_blocks_roundtrip_and_aliasing_resolves() {
     let map = f.object_map();
     assert_eq!(map[&7].kind, "dict");
     assert_eq!(map[&3].repr.as_deref(), Some("3"));
-
 
     let aliases = f.aliases(7);
     assert_eq!(
@@ -408,8 +399,6 @@ fn nondet_block_roundtrips() {
 
 #[test]
 fn crash_accessors_are_empty_on_a_ring_only_file() {
-
-
     let bytes = write_full_file();
     let f = FlightFile::from_bytes(&bytes).unwrap();
     assert!(f.exceptions().is_empty());

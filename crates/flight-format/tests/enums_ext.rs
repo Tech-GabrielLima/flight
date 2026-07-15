@@ -1,6 +1,5 @@
 use flight_format::{BlockType, Event, EventKind};
 
-
 #[test]
 fn block_meta_from_u8() {
     assert_eq!(BlockType::from_u8(0x01), Some(BlockType::Meta));
@@ -56,7 +55,6 @@ fn block_ext_from_u8() {
     assert_eq!(BlockType::from_u8(0x7F), Some(BlockType::Ext));
     assert_eq!(BlockType::Ext as u8, 0x7F);
 }
-
 
 #[test]
 fn block_name_meta() {
@@ -194,7 +192,6 @@ fn block_type_is_copy_and_eq() {
     assert_ne!(BlockType::Frame, BlockType::Object);
 }
 
-
 #[test]
 fn event_pystart_from_u8() {
     assert_eq!(EventKind::from_u8(1), Some(EventKind::PyStart));
@@ -324,7 +321,6 @@ fn event_kind_helper_resolves_valid_raw() {
 
 #[test]
 fn event_kind_helper_none_for_bad_raw() {
-
     let e = Event {
         kind: 200,
         thread: 0,

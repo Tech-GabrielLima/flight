@@ -12,7 +12,6 @@ where
     from_msgpack(&to_msgpack(v).unwrap()).unwrap()
 }
 
-
 #[test]
 fn metablock_rt_default() {
     let m = MetaBlock::default();
@@ -69,11 +68,9 @@ fn metablock_rt_unicode() {
 
 #[test]
 fn metablock_positional_encoding_is_fixarray_5() {
-
     let m = MetaBlock::default();
     assert_eq!(to_msgpack(&m).unwrap()[0], 0x95);
 }
-
 
 #[test]
 fn ring_rt_empty() {
@@ -168,7 +165,6 @@ fn ring_rt_big_code_ids() {
     };
     assert_eq!(rt(&p), p);
 }
-
 
 #[test]
 fn mutationvalue_rt_full() {
@@ -331,7 +327,6 @@ fn mutation_vec_rt() {
     assert_eq!(rt(&muts), muts);
 }
 
-
 #[test]
 fn nondet_rt_single() {
     let e = NonDetEvent {
@@ -414,7 +409,6 @@ fn nondet_vec_large_rt() {
     assert_eq!(rt(&events), events);
 }
 
-
 #[test]
 fn exclink_rt_head() {
     let e = ExceptionLink {
@@ -478,7 +472,6 @@ fn exclink_rt_unicode_message() {
     };
     assert_eq!(rt(&e), e);
 }
-
 
 #[test]
 fn frame_rt_basic() {
@@ -553,7 +546,6 @@ fn frame_vec_rt() {
         .collect();
     assert_eq!(rt(&frames), frames);
 }
-
 
 #[test]
 fn objectitem_rt_key_some() {
@@ -730,7 +722,6 @@ fn objectnode_rt_unicode_repr() {
     };
     assert_eq!(rt(&n), n);
 }
-
 
 #[test]
 fn source_rt_basic() {

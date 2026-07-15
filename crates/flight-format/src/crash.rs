@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceFile {
     pub filename: String,
@@ -8,16 +7,13 @@ pub struct SourceFile {
     pub text: String,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExceptionLink {
     pub exc_type: String,
     pub message: String,
 
-
     pub relation: String,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FrameInfo {
@@ -31,20 +27,16 @@ pub struct FrameInfo {
     pub locals: Vec<(String, u64)>,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectItem {
-
     pub key: Option<String>,
 
     pub value_id: u64,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectNode {
     pub id: u64,
-
 
     pub kind: String,
 
@@ -54,14 +46,11 @@ pub struct ObjectNode {
 
     pub length: Option<u64>,
 
-
     pub truncated: bool,
     pub items: Vec<ObjectItem>,
 }
 
 impl ObjectNode {
-
-
     pub fn placeholder(id: u64) -> ObjectNode {
         ObjectNode {
             id,

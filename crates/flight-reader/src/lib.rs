@@ -8,10 +8,8 @@ use flight_format::{
     HEADER_FIXED_LEN, MAGIC, TRAILER_LEN, TRAILER_MAGIC,
 };
 
-
 #[derive(Debug, Clone)]
 pub struct RawBlock {
-
     pub block_type: u8,
 
     pub offset: u64,
@@ -27,16 +25,13 @@ impl RawBlock {
     }
 }
 
-
 #[derive(Debug)]
 pub struct FlightFile {
-
     pub format_version: u16,
 
     pub header: HeaderMeta,
 
     pub blocks: Vec<RawBlock>,
-
 
     pub partial: bool,
 
@@ -44,12 +39,10 @@ pub struct FlightFile {
 }
 
 impl FlightFile {
-
     pub fn open(path: &Path) -> Result<FlightFile, FormatError> {
         let bytes = std::fs::read(path)?;
         FlightFile::from_bytes(&bytes)
     }
-
 
     pub fn from_bytes(bytes: &[u8]) -> Result<FlightFile, FormatError> {
         let (format_version, header, body_start) = parse_header(bytes)?;
@@ -71,26 +64,21 @@ impl FlightFile {
         })
     }
 
-
     pub fn meta(&self) -> Option<MetaBlock> {
         self.first_payload(BlockType::Meta)
     }
-
 
     pub fn event_ring(&self) -> Option<RingPayload> {
         self.first_payload(BlockType::EventRing)
     }
 
-
     pub fn exceptions(&self) -> Vec<ExceptionLink> {
         self.first_payload(BlockType::Exception).unwrap_or_default()
     }
 
-
     pub fn frames(&self) -> Vec<FrameInfo> {
         self.first_payload(BlockType::Frame).unwrap_or_default()
     }
-
 
     pub fn sources(&self) -> Vec<SourceFile> {
         self.blocks
@@ -101,26 +89,21 @@ impl FlightFile {
             .collect()
     }
 
-
     pub fn objects(&self) -> Vec<ObjectNode> {
         self.first_payload(BlockType::Object).unwrap_or_default()
     }
-
 
     pub fn mutations(&self) -> Vec<Mutation> {
         self.first_payload(BlockType::Mutation).unwrap_or_default()
     }
 
-
     pub fn nondet(&self) -> Vec<NonDetEvent> {
         self.first_payload(BlockType::Nondet).unwrap_or_default()
     }
 
-
     pub fn object_map(&self) -> HashMap<u64, ObjectNode> {
         self.objects().into_iter().map(|n| (n.id, n)).collect()
     }
-
 
     pub fn aliases(&self, object_id: u64) -> Vec<(usize, String)> {
         let mut out = Vec::new();
@@ -142,7 +125,6 @@ impl FlightFile {
     }
 }
 
-
 fn parse_header(bytes: &[u8]) -> Result<(u16, HeaderMeta, usize), FormatError> {
     if bytes.len() < HEADER_FIXED_LEN || &bytes[0..4] != MAGIC {
         return Err(FormatError::NotAFlightFile);
@@ -160,7 +142,6 @@ fn parse_header(bytes: &[u8]) -> Result<(u16, HeaderMeta, usize), FormatError> {
         .map_err(|e| FormatError::Decode(e.to_string()))?;
     Ok((version, header, meta_end))
 }
-
 
 fn blocks_via_index(bytes: &[u8], body_start: usize) -> Option<Vec<RawBlock>> {
     if bytes.len() < TRAILER_LEN {
@@ -197,7 +178,6 @@ fn blocks_via_index(bytes: &[u8], body_start: usize) -> Option<Vec<RawBlock>> {
     Some(blocks)
 }
 
-
 fn scan_blocks(bytes: &[u8], body_start: usize) -> (Vec<RawBlock>, bool) {
     let mut blocks = Vec::new();
     let mut pos = body_start;
@@ -205,7 +185,6 @@ fn scan_blocks(bytes: &[u8], body_start: usize) -> (Vec<RawBlock>, bool) {
         if pos == bytes.len() {
             return (blocks, true);
         }
-
 
         if bytes.len() - pos == TRAILER_LEN && &bytes[bytes.len() - 4..] == TRAILER_MAGIC {
             return (blocks, true);
@@ -218,7 +197,6 @@ fn scan_blocks(bytes: &[u8], body_start: usize) -> (Vec<RawBlock>, bool) {
                     bytes[pos + 3],
                     bytes[pos + 4],
                 ]) as usize;
-
 
                 if ty != BlockType::Index as u8 {
                     blocks.push(RawBlock {
@@ -233,7 +211,6 @@ fn scan_blocks(bytes: &[u8], body_start: usize) -> (Vec<RawBlock>, bool) {
         }
     }
 }
-
 
 fn read_block_at(bytes: &[u8], pos: usize) -> Option<(u8, Vec<u8>)> {
     if bytes.len() < pos + BLOCK_HEADER_LEN {

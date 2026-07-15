@@ -35,7 +35,6 @@ fn ring(n: u64) -> RingPayload {
     }
 }
 
-
 fn full() -> Vec<u8> {
     let mut buf = Vec::new();
     let mut w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
@@ -99,12 +98,10 @@ fn full() -> Vec<u8> {
     buf
 }
 
-
 #[test]
 fn truncation_at_every_offset_never_panics() {
     let bytes = full();
     for cut in 0..=bytes.len() {
-
         let _ = FlightFile::from_bytes(&bytes[..cut]);
     }
 }
@@ -113,18 +110,16 @@ fn truncation_at_every_offset_never_panics() {
 fn truncation_at_every_offset_error_only_in_header_region() {
     let bytes = full();
 
-
     let header_len = {
         let meta_len = u32::from_le_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
         flight_format::HEADER_FIXED_LEN + meta_len
     };
     for cut in 0..=bytes.len() {
-        match FlightFile::from_bytes(&bytes[..cut]) {
-            Err(_) => assert!(
+        if FlightFile::from_bytes(&bytes[..cut]).is_err() {
+            assert!(
                 cut < header_len,
                 "hard error at offset {cut} but header ends at {header_len}"
-            ),
-            Ok(_) => {}
+            );
         }
     }
 }
@@ -144,7 +139,6 @@ fn truncation_after_header_yields_ok_readable_file() {
 
 #[test]
 fn every_truncation_block_count_is_monotone_nondecreasing() {
-
     let bytes = full();
     let header_len = {
         let meta_len = u32::from_le_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
@@ -165,22 +159,22 @@ fn every_truncation_block_count_is_monotone_nondecreasing() {
 
 #[test]
 fn every_truncation_yields_a_prefix_of_the_full_block_list() {
-
-
     let bytes = full();
     let full_f = FlightFile::from_bytes(&bytes).unwrap();
     for cut in 0..=bytes.len() {
         if let Ok(f) = FlightFile::from_bytes(&bytes[..cut]) {
             assert!(f.blocks.len() <= full_f.blocks.len());
             for (i, b) in f.blocks.iter().enumerate() {
-                assert_eq!(b.block_type, full_f.blocks[i].block_type, "cut {cut} block {i}");
+                assert_eq!(
+                    b.block_type, full_f.blocks[i].block_type,
+                    "cut {cut} block {i}"
+                );
                 assert_eq!(b.offset, full_f.blocks[i].offset, "cut {cut} block {i}");
                 assert_eq!(b.payload, full_f.blocks[i].payload, "cut {cut} block {i}");
             }
         }
     }
 }
-
 
 #[test]
 fn footer_fully_gone_keeps_all_data_not_partial() {
@@ -198,7 +192,6 @@ fn footer_fully_gone_keeps_all_data_not_partial() {
     assert!(!cut_f.used_index);
     assert_eq!(cut_f.event_ring(), full_f.event_ring());
 }
-
 
 #[test]
 fn mid_ring_block_keeps_earlier_blocks_and_flags_partial() {
@@ -256,7 +249,6 @@ fn cut_after_first_block_keeps_exactly_it() {
     assert_eq!(f.meta().unwrap(), meta());
 }
 
-
 #[test]
 fn corrupt_last_block_payload_drops_it_others_survive() {
     let mut bytes = full();
@@ -301,11 +293,9 @@ fn oversized_block_length_field_is_partial_not_panic() {
     let f0 = FlightFile::from_bytes(&bytes).unwrap();
     let meta_off = f0.blocks[0].offset as usize;
 
-
     bytes[meta_off + 1..meta_off + 5].copy_from_slice(&(u32::MAX).to_le_bytes());
     let _ = FlightFile::from_bytes(&bytes);
 }
-
 
 #[test]
 fn flip_every_byte_of_trailer_region_never_panics() {
@@ -339,13 +329,13 @@ fn flip_every_byte_of_header_region_never_panics() {
 
 #[test]
 fn random_byte_flips_across_whole_file_never_panic() {
-
-
     let base = full();
     let n = base.len();
     let mut state = 0x1234_5678u64;
     for _ in 0..2000 {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let pos = (state >> 33) as usize % n;
         let val = (state & 0xFF) as u8;
         let mut bytes = base.clone();
@@ -356,7 +346,6 @@ fn random_byte_flips_across_whole_file_never_panic() {
 
 #[test]
 fn truncated_then_reparsed_is_stable() {
-
     let bytes = full();
     for cut in (0..bytes.len()).step_by(7) {
         let a = FlightFile::from_bytes(&bytes[..cut]);
@@ -375,8 +364,6 @@ fn truncated_then_reparsed_is_stable() {
 
 #[test]
 fn single_extra_trailing_garbage_byte_falls_back_to_scan() {
-
-
     let mut bytes = full();
     bytes.push(0xEE);
     let f = FlightFile::from_bytes(&bytes).unwrap();

@@ -10,7 +10,6 @@ fn header_fixed_len_is_10() {
 
 #[test]
 fn header_fixed_len_composition() {
-
     assert_eq!(HEADER_FIXED_LEN, 4 + 2 + 4);
 }
 
@@ -21,7 +20,6 @@ fn block_header_len_is_5() {
 
 #[test]
 fn block_header_len_composition() {
-
     assert_eq!(BLOCK_HEADER_LEN, 1 + 4);
 }
 
@@ -32,7 +30,6 @@ fn trailer_len_is_8() {
 
 #[test]
 fn trailer_len_composition() {
-
     assert_eq!(TRAILER_LEN, 4 + 4);
 }
 
@@ -77,7 +74,6 @@ fn event_is_24_bytes() {
 
 #[test]
 fn event_alignment_is_8() {
-
     assert_eq!(std::mem::align_of::<Event>(), 8);
 }
 
@@ -93,7 +89,6 @@ fn event_new_sets_raw_kind() {
 
 #[test]
 fn header_fixed_len_leaves_room_for_all_fields() {
-
     let magic = 4usize;
     let version = std::mem::size_of::<u16>();
     let metalen = std::mem::size_of::<u32>();

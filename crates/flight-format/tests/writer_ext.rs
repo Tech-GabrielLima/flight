@@ -1,6 +1,7 @@
 use flight_format::{
-    compress, decompress, from_msgpack, to_msgpack, BlockType, FlightWriter, HeaderMeta, IndexEntry,
-    MetaBlock, BLOCK_HEADER_LEN, FORMAT_VERSION, HEADER_FIXED_LEN, MAGIC, TRAILER_LEN, TRAILER_MAGIC,
+    compress, decompress, from_msgpack, to_msgpack, BlockType, FlightWriter, HeaderMeta,
+    IndexEntry, MetaBlock, BLOCK_HEADER_LEN, FORMAT_VERSION, HEADER_FIXED_LEN, MAGIC, TRAILER_LEN,
+    TRAILER_MAGIC,
 };
 
 fn meta() -> HeaderMeta {
@@ -11,11 +12,9 @@ fn meta() -> HeaderMeta {
     }
 }
 
-
 fn header_len(buf: &[u8]) -> usize {
     HEADER_FIXED_LEN + u32::from_le_bytes([buf[6], buf[7], buf[8], buf[9]]) as usize
 }
-
 
 fn read_block(buf: &[u8], off: usize) -> (u8, &[u8], usize) {
     let ty = buf[off];
@@ -23,7 +22,6 @@ fn read_block(buf: &[u8], off: usize) -> (u8, &[u8], usize) {
     let start = off + BLOCK_HEADER_LEN;
     (ty, &buf[start..start + len], start + len)
 }
-
 
 #[test]
 fn header_starts_with_magic() {
@@ -61,7 +59,6 @@ fn header_meta_decodes_back() {
 
 #[test]
 fn header_is_named_map_marker() {
-
     let mut buf = Vec::new();
     let _ = FlightWriter::new(&mut buf, &meta()).unwrap();
     assert_eq!(buf[HEADER_FIXED_LEN], 0x83);
@@ -85,7 +82,6 @@ fn header_meta_varies_with_content() {
 
     assert!(b.len() > a.len());
 }
-
 
 #[test]
 fn write_block_msgpack_exact_framing() {
@@ -187,7 +183,6 @@ fn write_block_named_roundtrips_and_is_map() {
     assert_eq!(back, m);
 }
 
-
 #[test]
 fn multiple_blocks_are_framed_in_order() {
     let mut buf = Vec::new();
@@ -210,10 +205,10 @@ fn offset_accounting_matches_finish_index() {
     let mut buf = Vec::new();
     let mut w = FlightWriter::new(&mut buf, &meta()).unwrap();
     for i in 0..5u8 {
-        w.write_block_msgpack(0x06, &vec![0x90; (i as usize) + 1]).unwrap();
+        w.write_block_msgpack(0x06, &vec![0x90; (i as usize) + 1])
+            .unwrap();
     }
     let _ = w.finish().unwrap();
-
 
     let entries = decode_index(&buf);
     for e in &entries {
@@ -223,7 +218,6 @@ fn offset_accounting_matches_finish_index() {
         assert_eq!(len, e.payload_len, "len field mismatch at {off}");
     }
 }
-
 
 fn decode_index(buf: &[u8]) -> Vec<IndexEntry> {
     let n = buf.len();
@@ -247,7 +241,8 @@ fn decode_index(buf: &[u8]) -> Vec<IndexEntry> {
 fn finish_appends_trailer_magic() {
     let mut buf = Vec::new();
     let mut w = FlightWriter::new(&mut buf, &meta()).unwrap();
-    w.write_block_named(BlockType::Meta, &MetaBlock::default()).unwrap();
+    w.write_block_named(BlockType::Meta, &MetaBlock::default())
+        .unwrap();
     let _ = w.finish().unwrap();
     assert_eq!(&buf[buf.len() - 4..], TRAILER_MAGIC);
 }
@@ -256,7 +251,8 @@ fn finish_appends_trailer_magic() {
 fn finish_trailer_points_at_index_block() {
     let mut buf = Vec::new();
     let mut w = FlightWriter::new(&mut buf, &meta()).unwrap();
-    w.write_block_named(BlockType::Meta, &MetaBlock::default()).unwrap();
+    w.write_block_named(BlockType::Meta, &MetaBlock::default())
+        .unwrap();
     let _ = w.finish().unwrap();
     let n = buf.len();
     let index_total_len =
@@ -276,12 +272,13 @@ fn finish_index_contains_all_prior_blocks_not_itself() {
 
     let entries = decode_index(&buf);
 
-
     assert_eq!(entries.len(), 3);
     assert_eq!(entries[0].block_type, 0x01);
     assert_eq!(entries[1].block_type, 0x06);
     assert_eq!(entries[2].block_type, 0x09);
-    assert!(entries.iter().all(|e| e.block_type != BlockType::Index as u8));
+    assert!(entries
+        .iter()
+        .all(|e| e.block_type != BlockType::Index as u8));
 }
 
 #[test]
@@ -314,8 +311,6 @@ fn finish_first_entry_offset_is_header_len() {
 
 #[test]
 fn finish_empty_file_index_is_empty() {
-
-
     let mut buf = Vec::new();
     let w = FlightWriter::new(&mut buf, &meta()).unwrap();
     let _ = w.finish().unwrap();
@@ -347,7 +342,8 @@ fn finish_index_total_len_covers_the_index_block() {
 fn file_without_finish_has_no_trailer() {
     let mut buf = Vec::new();
     let mut w = FlightWriter::new(&mut buf, &meta()).unwrap();
-    w.write_block_named(BlockType::Meta, &MetaBlock::default()).unwrap();
+    w.write_block_named(BlockType::Meta, &MetaBlock::default())
+        .unwrap();
     w.flush().unwrap();
     drop(w);
     assert_ne!(&buf[buf.len() - 4..], TRAILER_MAGIC);
@@ -387,7 +383,6 @@ fn finish_index_offsets_are_strictly_increasing() {
     }
 }
 
-
 #[test]
 fn create_writes_readable_file_on_disk() {
     use std::io::Read;
@@ -395,11 +390,15 @@ fn create_writes_readable_file_on_disk() {
     path.push(format!("flight_writer_test_{}.flight", std::process::id()));
     {
         let mut w = FlightWriter::create(&path, &meta()).unwrap();
-        w.write_block_named(BlockType::Meta, &MetaBlock::default()).unwrap();
+        w.write_block_named(BlockType::Meta, &MetaBlock::default())
+            .unwrap();
         let _ = w.finish().unwrap();
     }
     let mut bytes = Vec::new();
-    std::fs::File::open(&path).unwrap().read_to_end(&mut bytes).unwrap();
+    std::fs::File::open(&path)
+        .unwrap()
+        .read_to_end(&mut bytes)
+        .unwrap();
     std::fs::remove_file(&path).ok();
 
     assert_eq!(&bytes[0..4], MAGIC);

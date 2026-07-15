@@ -8,7 +8,6 @@ use flight_format::{CodeInfo, Event, EventKind, RingPayload};
 
 use crate::ring::Ring;
 
-
 #[derive(Default)]
 struct IntHasher(u64);
 
@@ -26,7 +25,6 @@ impl Hasher for IntHasher {
         self.0 = (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     }
     fn write(&mut self, bytes: &[u8]) {
-
         for &b in bytes {
             self.0 = (self.0 ^ b as u64).wrapping_mul(0x0100_0000_01B3);
         }
@@ -34,7 +32,6 @@ impl Hasher for IntHasher {
 }
 
 type IntMap<K, V> = HashMap<K, V, BuildHasherDefault<IntHasher>>;
-
 
 #[derive(Clone, Copy)]
 struct Slot {
@@ -49,7 +46,6 @@ thread_local! {
 }
 
 static NEXT_RECORDER_ID: AtomicU64 = AtomicU64::new(1);
-
 
 pub struct Recorder {
     id: u64,
@@ -84,7 +80,6 @@ impl Recorder {
         }
     }
 
-
     fn make_thread_ring(&self) -> (u16, *const Ring) {
         let tid = (self.next_thread.fetch_add(1, Ordering::Relaxed) & 0xFFFF) as u16;
         let mut rings = self.rings.lock().unwrap();
@@ -93,7 +88,6 @@ impl Recorder {
             .or_insert_with(|| Box::new(Ring::new(self.ring_cap)));
         (tid, &**ring as *const Ring)
     }
-
 
     #[inline]
     pub fn record(&self, kind: EventKind, code_id: u64, line: u32) {
@@ -115,13 +109,11 @@ impl Recorder {
                 }
             };
 
-
             unsafe {
                 (*slot.ring).push(Event::new(kind, slot.thread, line, code_id, tstamp));
             }
         });
     }
-
 
     pub fn set_filter(&self, deny: Vec<String>, force: Vec<String>) {
         *self.deny.lock().unwrap() = deny;
@@ -129,11 +121,9 @@ impl Recorder {
         self.interesting.lock().unwrap().clear();
     }
 
-
     pub fn interesting_cached(&self, code_id: u64) -> Option<bool> {
         self.interesting.lock().unwrap().get(&code_id).copied()
     }
-
 
     pub fn decide_interesting(&self, code_id: u64, filename: &str) -> bool {
         let value = self.compute_interesting(filename);
@@ -165,7 +155,6 @@ impl Recorder {
             .any(|d| real.starts_with(d.as_str()))
     }
 
-
     pub fn register_code(&self, code_id: u64, file: &str, qualname: &str, first_line: u32) -> bool {
         let mut codes = self.codes.lock().unwrap();
         if codes.contains_key(&code_id) {
@@ -182,7 +171,6 @@ impl Recorder {
         true
     }
 
-
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
     }
@@ -198,7 +186,6 @@ impl Recorder {
     pub fn code_count(&self) -> usize {
         self.codes.lock().unwrap().len()
     }
-
 
     pub fn snapshot_ring(&self) -> RingPayload {
         let mut events = Vec::new();
@@ -226,7 +213,6 @@ impl Recorder {
             wrapped,
         }
     }
-
 
     pub fn reset(&self) {
         self.rings.lock().unwrap().clear();
@@ -281,7 +267,6 @@ mod tests {
 
     #[test]
     fn distinct_os_threads_get_distinct_rings() {
-
         let rec = Arc::new(Recorder::new(64));
         let mut handles = Vec::new();
         for _ in 0..2 {
@@ -321,7 +306,6 @@ mod tests {
         assert!(!rec.compute_interesting(""));
         assert!(!rec.compute_interesting("/usr/lib/python3.13/json/__init__.py"));
 
-
         assert!(rec.compute_interesting("/home/me/project/app.py"));
     }
 
@@ -339,7 +323,6 @@ mod tests {
 mod recorder_ext {
     use super::*;
     use std::sync::Arc;
-
 
     #[test]
     fn register_code_returns_true_first_time_false_after() {
@@ -370,7 +353,6 @@ mod recorder_ext {
         assert_eq!(rec.code_count(), 50);
     }
 
-
     #[test]
     fn fresh_recorder_counters_are_zero() {
         let rec = Recorder::new(64);
@@ -396,7 +378,6 @@ mod recorder_ext {
         rec.record(EventKind::Line, 1, 2);
         assert_eq!(rec.thread_count(), 1);
     }
-
 
     #[test]
     fn snapshot_events_are_sorted_by_tstamp() {
@@ -479,7 +460,6 @@ mod recorder_ext {
         assert_eq!(rec.total_events(), 100);
     }
 
-
     #[test]
     fn reset_bumps_generation() {
         let rec = Recorder::new(64);
@@ -517,7 +497,6 @@ mod recorder_ext {
         assert_eq!(rec.total_events(), 2);
         assert_eq!(rec.snapshot_ring().events.len(), 2);
     }
-
 
     #[test]
     fn synthetic_and_empty_filenames_are_never_interesting() {
@@ -561,7 +540,11 @@ mod recorder_ext {
         rec.decide_interesting(1, "/home/me/app.py");
         assert_eq!(rec.interesting_cached(1), Some(true));
         rec.set_filter(vec!["/home/me".to_string()], vec![]);
-        assert_eq!(rec.interesting_cached(1), None, "cache cleared on set_filter");
+        assert_eq!(
+            rec.interesting_cached(1),
+            None,
+            "cache cleared on set_filter"
+        );
     }
 
     #[test]
@@ -581,7 +564,6 @@ mod recorder_ext {
         assert!(rec.decide_interesting(1, "/home/me/app.py"));
         assert!(!rec.decide_interesting(2, "<string>"));
     }
-
 
     #[test]
     fn concurrent_threads_get_distinct_rings_and_all_events_survive() {
@@ -623,13 +605,14 @@ mod recorder_ext {
         }
         let snap = rec.snapshot_ring();
         assert_eq!(snap.events.len(), 2000);
-        assert!(snap.events.windows(2).all(|w| w[0].tstamp + 1 == w[1].tstamp));
+        assert!(snap
+            .events
+            .windows(2)
+            .all(|w| w[0].tstamp + 1 == w[1].tstamp));
     }
 
     #[test]
     fn distinct_recorders_have_distinct_ids() {
-
-
         let a = Recorder::new(64);
         let b = Recorder::new(64);
         a.record(EventKind::Line, 1, 1);

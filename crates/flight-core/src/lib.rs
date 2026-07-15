@@ -18,7 +18,6 @@ use flight_format::{
 use flight_reader::FlightFile;
 use recorder::Recorder;
 
-
 type SourceTuple = (String, String, String);
 
 type ExceptionTuple = (String, String, String);
@@ -51,9 +50,7 @@ type MutationTuple = (
 
 type NonDetTuple = (u64, String, String, String);
 
-
 static RECORDER: OnceLock<Recorder> = OnceLock::new();
-
 
 static RING_CAP: AtomicUsize = AtomicUsize::new(4096);
 
@@ -61,9 +58,7 @@ fn recorder() -> &'static Recorder {
     RECORDER.get_or_init(|| Recorder::new(RING_CAP.load(Ordering::Relaxed)))
 }
 
-
 static DISABLE: OnceLock<Py<PyAny>> = OnceLock::new();
-
 
 #[pyfunction]
 fn record(kind: u8, code_id: u64, line: u32) {
@@ -74,13 +69,11 @@ fn record(kind: u8, code_id: u64, line: u32) {
     });
 }
 
-
 #[pyfunction]
 fn configure_filter(deny: Vec<String>, force: Vec<String>, disable: Py<PyAny>) {
     recorder().set_filter(deny, force);
     let _ = DISABLE.set(disable);
 }
-
 
 #[inline]
 fn keep_or_disable(py: Python<'_>, disable: bool) -> Py<PyAny> {
@@ -91,7 +84,6 @@ fn keep_or_disable(py: Python<'_>, disable: bool) -> Py<PyAny> {
     }
     py.None()
 }
-
 
 const CACHE_SIZE: usize = 512;
 
@@ -108,7 +100,6 @@ thread_local! {
         const { std::cell::UnsafeCell::new([CacheSlot { code_id: 0, generation: 0, state: 0 }; CACHE_SIZE]) };
 }
 
-
 #[inline]
 fn interesting_code_id(code: &Bound<'_, PyAny>) -> Option<u64> {
     let code_id = code.as_ptr() as u64;
@@ -117,9 +108,7 @@ fn interesting_code_id(code: &Bound<'_, PyAny>) -> Option<u64> {
 
     let idx = ((code_id >> 4) as usize) & (CACHE_SIZE - 1);
 
-
     let cached = INTEREST.with(|c| {
-
         let slot = unsafe { (*c.get())[idx] };
         if slot.code_id == code_id && slot.generation == generation {
             slot.state
@@ -159,15 +148,12 @@ fn interesting_code_id(code: &Bound<'_, PyAny>) -> Option<u64> {
         }
     };
 
-    INTEREST.with(|c| {
-
-        unsafe {
-            (*c.get())[idx] = CacheSlot {
-                code_id,
-                generation,
-                state: if interesting { 1 } else { 2 },
-            };
-        }
+    INTEREST.with(|c| unsafe {
+        (*c.get())[idx] = CacheSlot {
+            code_id,
+            generation,
+            state: if interesting { 1 } else { 2 },
+        };
     });
     if interesting {
         Some(code_id)
@@ -175,7 +161,6 @@ fn interesting_code_id(code: &Bound<'_, PyAny>) -> Option<u64> {
         None
     }
 }
-
 
 #[inline]
 fn record_filtered(code: &Bound<'_, PyAny>, kind: EventKind, line: u32) -> bool {
@@ -188,14 +173,12 @@ fn record_filtered(code: &Bound<'_, PyAny>, kind: EventKind, line: u32) -> bool 
     }
 }
 
-
 #[inline]
 fn record_no_disable(code: &Bound<'_, PyAny>, kind: EventKind) {
     if let Some(code_id) = interesting_code_id(code) {
         recorder().record(kind, code_id, 0);
     }
 }
-
 
 #[pyfunction]
 fn cb_line(py: Python<'_>, code: Bound<'_, PyAny>, line: u32) -> Py<PyAny> {
@@ -206,7 +189,6 @@ fn cb_line(py: Python<'_>, code: Bound<'_, PyAny>, line: u32) -> Py<PyAny> {
     keep_or_disable(py, disable)
 }
 
-
 #[pyfunction]
 fn cb_py_start(py: Python<'_>, code: Bound<'_, PyAny>, _offset: Bound<'_, PyAny>) -> Py<PyAny> {
     let disable = catch_unwind(AssertUnwindSafe(|| {
@@ -215,7 +197,6 @@ fn cb_py_start(py: Python<'_>, code: Bound<'_, PyAny>, _offset: Bound<'_, PyAny>
     .unwrap_or(false);
     keep_or_disable(py, disable)
 }
-
 
 #[pyfunction]
 fn cb_py_return(
@@ -230,7 +211,6 @@ fn cb_py_return(
     .unwrap_or(false);
     keep_or_disable(py, disable)
 }
-
 
 #[pyfunction]
 fn cb_raise(
@@ -271,12 +251,10 @@ fn cb_unwind(
     py.None()
 }
 
-
 #[pyfunction]
 fn register_code(code_id: u64, file: &str, qualname: &str, first_line: u32) -> bool {
     catch_unwind(|| recorder().register_code(code_id, file, qualname, first_line)).unwrap_or(false)
 }
-
 
 #[pyfunction]
 fn configure(ring_cap: usize) -> bool {
@@ -286,7 +264,6 @@ fn configure(ring_cap: usize) -> bool {
     RING_CAP.store(ring_cap, Ordering::Relaxed);
     true
 }
-
 
 #[pyfunction]
 fn stats(py: Python<'_>) -> PyResult<Py<PyDict>> {
@@ -299,12 +276,10 @@ fn stats(py: Python<'_>) -> PyResult<Py<PyDict>> {
     Ok(d.into())
 }
 
-
 #[pyfunction]
 fn reset() {
     let _ = catch_unwind(|| recorder().reset());
 }
-
 
 #[pyfunction]
 #[pyo3(name = "dump")]
@@ -326,7 +301,6 @@ fn dump_file(
     };
     dump::dump(&path, meta, recorder()).map_err(|e| PyValueError::new_err(e.to_string()))
 }
-
 
 #[pyfunction]
 #[pyo3(name = "dump_crash")]
@@ -416,7 +390,6 @@ fn dump_crash(
     .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
-
 #[pyfunction]
 #[pyo3(name = "dump_scope")]
 #[allow(clippy::too_many_arguments)]
@@ -472,7 +445,6 @@ fn dump_scope(
         .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
-
 #[pyfunction]
 #[pyo3(name = "dump_nondet")]
 #[allow(clippy::too_many_arguments)]
@@ -514,7 +486,6 @@ fn dump_nondet(
         .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
-
 #[pyfunction]
 fn read_nondet(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyList>> {
     let f = FlightFile::open(&path).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -525,7 +496,6 @@ fn read_nondet(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyList>> {
         .collect();
     Ok(PyList::new(py, out)?.into())
 }
-
 
 #[pyfunction]
 fn read_summary(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
@@ -586,7 +556,6 @@ fn read_summary(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
     Ok(d.into())
 }
 
-
 #[pyfunction]
 fn read_crash(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
     let f = FlightFile::open(&path).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -634,7 +603,6 @@ fn read_crash(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
     Ok(d.into())
 }
 
-
 #[pyfunction]
 fn read_mutations(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyList>> {
     let f = FlightFile::open(&path).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -663,7 +631,6 @@ fn read_mutations(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyList>> {
     Ok(PyList::new(py, out)?.into())
 }
 
-
 #[pyfunction]
 fn read_events(py: Python<'_>, path: PathBuf, limit: usize) -> PyResult<Py<PyList>> {
     let f = FlightFile::open(&path).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -682,7 +649,6 @@ fn read_events(py: Python<'_>, path: PathBuf, limit: usize) -> PyResult<Py<PyLis
     }
     Ok(PyList::new(py, out)?.into())
 }
-
 
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -707,7 +673,6 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_mutations, m)?)?;
     m.add_function(wrap_pyfunction!(read_events, m)?)?;
     m.add_function(wrap_pyfunction!(read_nondet, m)?)?;
-
 
     m.add("EVENT_PY_START", EventKind::PyStart as u8)?;
     m.add("EVENT_PY_RETURN", EventKind::PyReturn as u8)?;

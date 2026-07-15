@@ -7,7 +7,6 @@ use flight_format::{
 };
 use flight_reader::FlightFile;
 
-
 fn sample_meta() -> MetaBlock {
     MetaBlock {
         python_version: "3.13.1".into(),
@@ -160,11 +159,11 @@ fn sample_source(name: &str) -> SourceFile {
     }
 }
 
-
 fn write_kitchen_sink() -> Vec<u8> {
     let mut buf = Vec::new();
     let mut w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
-    w.write_block_named(BlockType::Meta, &sample_meta()).unwrap();
+    w.write_block_named(BlockType::Meta, &sample_meta())
+        .unwrap();
     w.write_block(BlockType::Exception, &sample_exceptions())
         .unwrap();
     w.write_block(BlockType::Frame, &sample_frames()).unwrap();
@@ -177,8 +176,11 @@ fn write_kitchen_sink() -> Vec<u8> {
     w.write_block(BlockType::Source, &vec![sample_source("b.py")])
         .unwrap();
 
-    w.write_block_msgpack(BlockType::Timeline as u8, &rmp_serde::to_vec(&"tl").unwrap())
-        .unwrap();
+    w.write_block_msgpack(
+        BlockType::Timeline as u8,
+        &rmp_serde::to_vec(&"tl").unwrap(),
+    )
+    .unwrap();
 
     w.write_block_msgpack(BlockType::Ext as u8, &rmp_serde::to_vec(&"ext").unwrap())
         .unwrap();
@@ -194,13 +196,13 @@ fn write_kitchen_sink() -> Vec<u8> {
 fn write_full_file() -> Vec<u8> {
     let mut buf = Vec::new();
     let mut w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
-    w.write_block_named(BlockType::Meta, &sample_meta()).unwrap();
+    w.write_block_named(BlockType::Meta, &sample_meta())
+        .unwrap();
     w.write_block(BlockType::EventRing, &sample_ring(100))
         .unwrap();
     w.finish().unwrap();
     buf
 }
-
 
 #[test]
 fn format_version_is_one() {
@@ -234,7 +236,6 @@ fn header_created_ms_preserved() {
     assert_eq!(f.header.created_unix_ms, 1_783_000_000_000);
 }
 
-
 #[test]
 fn meta_accessor_decodes_all_fields() {
     let f = FlightFile::from_bytes(&write_kitchen_sink()).unwrap();
@@ -264,7 +265,8 @@ fn empty_ring_roundtrips() {
     let f = {
         let mut buf = Vec::new();
         let mut w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
-        w.write_block(BlockType::EventRing, &sample_ring(0)).unwrap();
+        w.write_block(BlockType::EventRing, &sample_ring(0))
+            .unwrap();
         w.finish().unwrap();
         FlightFile::from_bytes(&buf).unwrap()
     };
@@ -307,7 +309,10 @@ fn frames_accessor_full_roundtrip() {
 fn frames_locals_preserved() {
     let f = FlightFile::from_bytes(&write_kitchen_sink()).unwrap();
     let frames = f.frames();
-    assert_eq!(frames[0].locals, vec![("cfg".to_string(), 7), ("x".to_string(), 3)]);
+    assert_eq!(
+        frames[0].locals,
+        vec![("cfg".to_string(), 7), ("x".to_string(), 3)]
+    );
 }
 
 #[test]
@@ -394,7 +399,6 @@ fn sources_single_block() {
 
 #[test]
 fn sources_multiple_blocks_all_collected() {
-
     let f = FlightFile::from_bytes(&write_kitchen_sink()).unwrap();
     let names: Vec<String> = f.sources().into_iter().map(|s| s.filename).collect();
     assert_eq!(names, vec!["a.py".to_string(), "b.py".to_string()]);
@@ -420,7 +424,6 @@ fn many_source_blocks_all_collected() {
     let f = FlightFile::from_bytes(&buf).unwrap();
     assert_eq!(f.sources().len(), 25);
 }
-
 
 #[test]
 fn aliases_finds_object_across_frames() {
@@ -453,12 +456,12 @@ fn aliases_empty_when_no_frames() {
     assert!(f.aliases(7).is_empty());
 }
 
-
 #[test]
 fn meta_absent_returns_none() {
     let mut buf = Vec::new();
     let mut w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
-    w.write_block(BlockType::EventRing, &sample_ring(3)).unwrap();
+    w.write_block(BlockType::EventRing, &sample_ring(3))
+        .unwrap();
     w.finish().unwrap();
     let f = FlightFile::from_bytes(&buf).unwrap();
     assert!(f.meta().is_none());
@@ -468,7 +471,8 @@ fn meta_absent_returns_none() {
 fn event_ring_absent_returns_none() {
     let mut buf = Vec::new();
     let mut w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
-    w.write_block_named(BlockType::Meta, &sample_meta()).unwrap();
+    w.write_block_named(BlockType::Meta, &sample_meta())
+        .unwrap();
     w.finish().unwrap();
     let f = FlightFile::from_bytes(&buf).unwrap();
     assert!(f.event_ring().is_none());
@@ -516,7 +520,6 @@ fn sources_absent_is_empty() {
     assert!(f.sources().is_empty());
 }
 
-
 #[test]
 fn blocks_are_in_file_order() {
     let f = FlightFile::from_bytes(&write_kitchen_sink()).unwrap();
@@ -543,7 +546,10 @@ fn blocks_are_in_file_order() {
 #[test]
 fn index_block_never_surfaces_in_blocks() {
     let f = FlightFile::from_bytes(&write_kitchen_sink()).unwrap();
-    assert!(f.blocks.iter().all(|b| b.block_type != BlockType::Index as u8));
+    assert!(f
+        .blocks
+        .iter()
+        .all(|b| b.block_type != BlockType::Index as u8));
 }
 
 #[test]
@@ -622,7 +628,6 @@ fn unknown_block_present_but_skipped_by_typed_accessors() {
     assert_eq!(f.event_ring().unwrap(), sample_ring(30));
 }
 
-
 #[test]
 fn first_meta_block_wins() {
     let mut buf = Vec::new();
@@ -641,13 +646,14 @@ fn first_meta_block_wins() {
 fn first_event_ring_block_wins() {
     let mut buf = Vec::new();
     let mut w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
-    w.write_block(BlockType::EventRing, &sample_ring(5)).unwrap();
-    w.write_block(BlockType::EventRing, &sample_ring(99)).unwrap();
+    w.write_block(BlockType::EventRing, &sample_ring(5))
+        .unwrap();
+    w.write_block(BlockType::EventRing, &sample_ring(99))
+        .unwrap();
     w.finish().unwrap();
     let f = FlightFile::from_bytes(&buf).unwrap();
     assert_eq!(f.event_ring().unwrap().events.len(), 5);
 }
-
 
 #[test]
 fn clean_close_uses_index() {
@@ -660,8 +666,10 @@ fn clean_close_uses_index() {
 fn footerless_uses_scan_and_is_not_partial() {
     let mut buf = Vec::new();
     let mut w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
-    w.write_block_named(BlockType::Meta, &sample_meta()).unwrap();
-    w.write_block(BlockType::EventRing, &sample_ring(3)).unwrap();
+    w.write_block_named(BlockType::Meta, &sample_meta())
+        .unwrap();
+    w.write_block(BlockType::EventRing, &sample_ring(3))
+        .unwrap();
     w.flush().unwrap();
     drop(w);
     let f = FlightFile::from_bytes(&buf).unwrap();
@@ -699,8 +707,6 @@ fn index_and_scan_agree_on_accessor_output() {
 
 #[test]
 fn finish_with_no_content_blocks() {
-
-
     let mut buf = Vec::new();
     let w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
     w.finish().unwrap();
@@ -714,7 +720,6 @@ fn finish_with_no_content_blocks() {
 
 #[test]
 fn header_only_file_no_footer() {
-
     let mut buf = Vec::new();
     let w = FlightWriter::new(&mut buf, &HeaderMeta::new("0.0.1")).unwrap();
     drop(w);
@@ -763,8 +768,6 @@ fn index_start_before_body_falls_back_to_scan() {
 
 #[test]
 fn index_disagreeing_with_bytes_falls_back_to_scan() {
-
-
     let clean = write_kitchen_sink();
     let f0 = FlightFile::from_bytes(&clean).unwrap();
     let meta_off = f0
@@ -778,12 +781,10 @@ fn index_disagreeing_with_bytes_falls_back_to_scan() {
     let f = FlightFile::from_bytes(&bytes).unwrap();
     assert!(!f.used_index);
 
-
     assert!(f.meta().is_none());
     assert!(f.blocks.iter().any(|b| b.block_type == 0x42));
     assert_eq!(f.event_ring().unwrap(), sample_ring(30));
 }
-
 
 fn scratch(name: &str) -> std::path::PathBuf {
     let mut p = std::env::temp_dir();
@@ -812,7 +813,6 @@ fn open_nonexistent_path_is_err() {
     std::fs::remove_file(&path).ok();
     assert!(FlightFile::open(&path).is_err());
 }
-
 
 #[test]
 fn empty_input_is_err() {
@@ -860,7 +860,6 @@ fn header_declaring_more_meta_than_present_is_err() {
 
 #[test]
 fn corrupt_meta_msgpack_is_err() {
-
     let mut bytes = Vec::new();
     bytes.extend_from_slice(flight_format::MAGIC);
     bytes.extend_from_slice(&1u16.to_le_bytes());
@@ -871,8 +870,6 @@ fn corrupt_meta_msgpack_is_err() {
 
 #[test]
 fn exactly_header_len_with_zero_meta_parses() {
-
-
     let mut bytes = Vec::new();
     bytes.extend_from_slice(flight_format::MAGIC);
     bytes.extend_from_slice(&1u16.to_le_bytes());

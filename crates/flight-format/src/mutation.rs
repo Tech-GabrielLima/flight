@@ -1,9 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MutationValue {
-
     pub kind: String,
 
     pub repr: Option<String>,
@@ -13,12 +11,9 @@ pub struct MutationValue {
     pub length: Option<u64>,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mutation {
-
     pub seq: u64,
-
 
     pub kind: String,
 

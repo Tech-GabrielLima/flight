@@ -4,11 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::event::{CodeInfo, Event};
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum BlockType {
-
     Meta = 0x01,
 
     Source = 0x02,
@@ -67,7 +65,6 @@ impl BlockType {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct MetaBlock {
     pub python_version: String,
@@ -77,22 +74,17 @@ pub struct MetaBlock {
     pub flight_version: String,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct RingPayload {
-
     pub codes: HashMap<u64, CodeInfo>,
 
     pub events: Vec<Event>,
 
-
     pub wrapped: bool,
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexEntry {
-
     pub block_type: u8,
 
     pub offset: u64,

@@ -1,4 +1,6 @@
-use flight_format::{compress, decompress, from_msgpack, to_msgpack, CodeInfo, Event, EventKind, IndexEntry};
+use flight_format::{
+    compress, decompress, from_msgpack, to_msgpack, CodeInfo, Event, EventKind, IndexEntry,
+};
 
 fn rt<T>(v: &T) -> T
 where
@@ -7,7 +9,6 @@ where
     from_msgpack(&to_msgpack(v).unwrap()).unwrap()
 }
 
-
 fn mp_str(s: &str) -> Vec<u8> {
     let b = s.as_bytes();
     assert!(b.len() < 32);
@@ -15,7 +16,6 @@ fn mp_str(s: &str) -> Vec<u8> {
     v.extend_from_slice(b);
     v
 }
-
 
 #[test]
 fn event_rt_basic() {
@@ -71,7 +71,6 @@ fn event_rt_max_fields() {
 
 #[test]
 fn event_rt_preserves_raw_kind_byte() {
-
     let e = Event {
         kind: 42,
         thread: 7,
@@ -84,8 +83,6 @@ fn event_rt_preserves_raw_kind_byte() {
 
 #[test]
 fn event_encodes_as_fixarray_of_5() {
-
-
     let e = Event::new(EventKind::Line, 0, 0, 0, 0);
     let bytes = to_msgpack(&e).unwrap();
     assert_eq!(bytes[0], 0x95);
@@ -98,7 +95,6 @@ fn event_rt_many_tstamps() {
         assert_eq!(rt(&e), e);
     }
 }
-
 
 #[test]
 fn codeinfo_rt_basic() {
@@ -153,8 +149,6 @@ fn codeinfo_encodes_as_fixarray_of_3() {
 
 #[test]
 fn codeinfo_tolerates_extra_named_field() {
-
-
     let mut bytes = vec![0x84];
     bytes.extend(mp_str("file"));
     bytes.extend(mp_str("a.py"));
@@ -183,7 +177,6 @@ fn codeinfo_decodes_from_named_map_form() {
     assert_eq!(c.first_line, 42);
     assert_eq!(c.file, "m.py");
 }
-
 
 #[test]
 fn indexentry_rt_basic() {
@@ -270,7 +263,6 @@ fn indexentry_large_vec_rt() {
     assert_eq!(rt(&v), v);
 }
 
-
 #[test]
 fn compress_decompress_empty() {
     let c = compress(b"").unwrap();
@@ -299,7 +291,9 @@ fn compress_decompress_64k_plus() {
 
 #[test]
 fn compress_decompress_over_1mib() {
-    let data: Vec<u8> = (0..1_200_000u32).map(|i| (i.wrapping_mul(2654435761) >> 24) as u8).collect();
+    let data: Vec<u8> = (0..1_200_000u32)
+        .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
+        .collect();
     let c = compress(&data).unwrap();
     assert_eq!(decompress(&c).unwrap(), data);
 }
@@ -308,7 +302,11 @@ fn compress_decompress_over_1mib() {
 fn compress_highly_compressible_shrinks() {
     let data = vec![0u8; 100_000];
     let c = compress(&data).unwrap();
-    assert!(c.len() < data.len() / 10, "zeros should compress hugely: {}", c.len());
+    assert!(
+        c.len() < data.len() / 10,
+        "zeros should compress hugely: {}",
+        c.len()
+    );
     assert_eq!(decompress(&c).unwrap(), data);
 }
 
@@ -326,7 +324,6 @@ fn compress_repeated_pattern_shrinks() {
 
 #[test]
 fn compress_randomish_roundtrips() {
-
     let mut state = 0x1234_5678_9abc_def0u64;
     let data: Vec<u8> = (0..50_000)
         .map(|_| {
@@ -374,15 +371,16 @@ fn decompress_rejects_truncated_frame() {
     let c = compress(b"some reasonably long payload to compress into a frame").unwrap();
 
     let truncated = &c[..c.len() / 2];
-    match decompress(truncated) {
-        Ok(out) => assert_ne!(out.as_slice(), b"some reasonably long payload to compress into a frame"),
-        Err(_) => {}
+    if let Ok(out) = decompress(truncated) {
+        assert_ne!(
+            out.as_slice(),
+            b"some reasonably long payload to compress into a frame"
+        );
     }
 }
 
 #[test]
 fn compress_then_manual_decompress_roundtrip() {
-
     let c = compress(b"x").unwrap();
     assert!(!c.is_empty());
     assert_eq!(decompress(&c).unwrap(), b"x");
@@ -397,7 +395,6 @@ fn compress_roundtrip_binary_with_nuls() {
 
 #[test]
 fn compress_roundtrip_msgpack_of_events() {
-
     let events: Vec<Event> = (0..2000)
         .map(|i| Event::new(EventKind::Line, 0, i, 1, i as u64))
         .collect();

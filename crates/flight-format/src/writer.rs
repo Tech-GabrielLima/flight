@@ -7,7 +7,6 @@ use crate::error::FormatError;
 use crate::header::HeaderMeta;
 use crate::{FORMAT_VERSION, MAGIC, TRAILER_MAGIC};
 
-
 pub struct FlightWriter<W: Write> {
     w: W,
     offset: u64,
@@ -15,7 +14,6 @@ pub struct FlightWriter<W: Write> {
 }
 
 impl FlightWriter<BufWriter<File>> {
-
     pub fn create(path: &Path, meta: &HeaderMeta) -> Result<Self, FormatError> {
         let file = File::create(path)?;
         FlightWriter::new(BufWriter::new(file), meta)
@@ -23,10 +21,7 @@ impl FlightWriter<BufWriter<File>> {
 }
 
 impl<W: Write> FlightWriter<W> {
-
     pub fn new(mut w: W, meta: &HeaderMeta) -> Result<Self, FormatError> {
-
-
         let meta_bytes =
             rmp_serde::to_vec_named(meta).map_err(|e| FormatError::Encode(e.to_string()))?;
         w.write_all(MAGIC)?;
@@ -41,7 +36,6 @@ impl<W: Write> FlightWriter<W> {
         })
     }
 
-
     pub fn write_block<T: serde::Serialize>(
         &mut self,
         ty: BlockType,
@@ -50,7 +44,6 @@ impl<W: Write> FlightWriter<W> {
         let bytes = crate::to_msgpack(payload)?;
         self.write_block_msgpack(ty as u8, &bytes)
     }
-
 
     pub fn write_block_named<T: serde::Serialize>(
         &mut self,
@@ -61,7 +54,6 @@ impl<W: Write> FlightWriter<W> {
             rmp_serde::to_vec_named(payload).map_err(|e| FormatError::Encode(e.to_string()))?;
         self.write_block_msgpack(ty as u8, &bytes)
     }
-
 
     pub fn write_block_msgpack(&mut self, ty: u8, msgpack: &[u8]) -> Result<(), FormatError> {
         let compressed = crate::compress(msgpack)?;
@@ -77,17 +69,14 @@ impl<W: Write> FlightWriter<W> {
         Ok(())
     }
 
-
     pub fn flush(&mut self) -> Result<(), FormatError> {
         self.w.flush()?;
         Ok(())
     }
 
-
     pub fn finish(mut self) -> Result<W, FormatError> {
         let index_bytes = crate::to_msgpack(&self.index)?;
         let index_start = self.offset;
-
 
         self.write_block_msgpack(BlockType::Index as u8, &index_bytes)?;
         let index_total_len = (self.offset - index_start) as u32;

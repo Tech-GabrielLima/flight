@@ -1,10 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum EventKind {
-
     PyStart = 1,
 
     PyReturn = 2,
@@ -43,20 +41,16 @@ impl EventKind {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(C)]
 pub struct Event {
-
     pub kind: u8,
 
     pub thread: u16,
 
     pub line: u32,
 
-
     pub code_id: u64,
-
 
     pub tstamp: u64,
 }
@@ -76,7 +70,6 @@ impl Event {
         EventKind::from_u8(self.kind)
     }
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeInfo {

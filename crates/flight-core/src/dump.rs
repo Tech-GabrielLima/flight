@@ -7,7 +7,6 @@ use flight_format::{
 
 use crate::recorder::Recorder;
 
-
 pub fn dump(path: &Path, meta: MetaBlock, recorder: &Recorder) -> Result<(), FormatError> {
     let header = HeaderMeta::new(&meta.flight_version);
     let mut w = FlightWriter::create(path, &header)?;
@@ -17,7 +16,6 @@ pub fn dump(path: &Path, meta: MetaBlock, recorder: &Recorder) -> Result<(), For
     w.finish()?;
     Ok(())
 }
-
 
 #[allow(clippy::too_many_arguments)]
 pub fn dump_crash(
@@ -46,7 +44,6 @@ pub fn dump_crash(
         w.write_block(BlockType::Nondet, &nondet)?;
     }
 
-
     for src in sources {
         w.write_block(BlockType::Source, &vec![src])?;
     }
@@ -55,7 +52,6 @@ pub fn dump_crash(
     w.finish()?;
     Ok(())
 }
-
 
 pub fn dump_nondet(
     path: &Path,
@@ -78,7 +74,6 @@ pub fn dump_nondet(
     w.finish()?;
     Ok(())
 }
-
 
 pub fn dump_scope(
     path: &Path,
@@ -204,7 +199,6 @@ mod dump_ext {
         }
     }
 
-
     #[test]
     fn dump_is_clean_and_indexed() {
         let path = tmp("dump-clean");
@@ -234,7 +228,10 @@ mod dump_ext {
         dump(&path, meta(), &recorder_with(5)).unwrap();
         let f = FlightFile::open(&path).unwrap();
         let types: Vec<u8> = f.blocks.iter().map(|b| b.block_type).collect();
-        assert_eq!(types, vec![BlockType::Meta as u8, BlockType::EventRing as u8]);
+        assert_eq!(
+            types,
+            vec![BlockType::Meta as u8, BlockType::EventRing as u8]
+        );
     }
 
     #[test]
@@ -249,8 +246,6 @@ mod dump_ext {
 
     #[test]
     fn dump_drains_the_ring() {
-
-
         let rec = recorder_with(10);
         let p1 = tmp("dump-drain-1");
         let p2 = tmp("dump-drain-2");
@@ -262,7 +257,6 @@ mod dump_ext {
         let b = FlightFile::open(&p2).unwrap().event_ring().unwrap();
         assert_eq!(a.events.len(), b.events.len());
     }
-
 
     fn exceptions() -> Vec<ExceptionLink> {
         vec![
@@ -395,7 +389,10 @@ mod dump_ext {
         .unwrap();
         let f = FlightFile::open(&path).unwrap();
         let types: Vec<u8> = f.blocks.iter().map(|b| b.block_type).collect();
-        assert_eq!(types, vec![BlockType::Meta as u8, BlockType::EventRing as u8]);
+        assert_eq!(
+            types,
+            vec![BlockType::Meta as u8, BlockType::EventRing as u8]
+        );
         assert!(f.exceptions().is_empty());
         assert!(f.frames().is_empty());
         assert!(f.objects().is_empty());
@@ -430,8 +427,6 @@ mod dump_ext {
 
     #[test]
     fn dump_crash_is_written_crash_first() {
-
-
         let path = tmp("crash-order");
         let _c = Cleanup(path.clone());
         dump_crash(
@@ -447,11 +442,16 @@ mod dump_ext {
         .unwrap();
         let f = FlightFile::open(&path).unwrap();
         let types: Vec<u8> = f.blocks.iter().map(|b| b.block_type).collect();
-        let ring_pos = types.iter().position(|&t| t == BlockType::EventRing as u8).unwrap();
-        let exc_pos = types.iter().position(|&t| t == BlockType::Exception as u8).unwrap();
+        let ring_pos = types
+            .iter()
+            .position(|&t| t == BlockType::EventRing as u8)
+            .unwrap();
+        let exc_pos = types
+            .iter()
+            .position(|&t| t == BlockType::Exception as u8)
+            .unwrap();
         assert!(exc_pos < ring_pos, "exception block precedes the ring");
     }
-
 
     #[test]
     fn dump_nondet_roundtrip() {
@@ -471,7 +471,14 @@ mod dump_ext {
                 payload: "0.375".into(),
             },
         ];
-        dump_nondet(&path, meta(), events.clone(), vec![src("a.py")], &recorder_with(4)).unwrap();
+        dump_nondet(
+            &path,
+            meta(),
+            events.clone(),
+            vec![src("a.py")],
+            &recorder_with(4),
+        )
+        .unwrap();
         let f = FlightFile::open(&path).unwrap();
         assert!(!f.partial);
         assert_eq!(f.nondet(), events);
@@ -486,9 +493,11 @@ mod dump_ext {
         dump_nondet(&path, meta(), vec![], vec![], &recorder_with(2)).unwrap();
         let f = FlightFile::open(&path).unwrap();
         assert!(f.nondet().is_empty());
-        assert!(f.blocks.iter().all(|b| b.block_type != BlockType::Nondet as u8));
+        assert!(f
+            .blocks
+            .iter()
+            .all(|b| b.block_type != BlockType::Nondet as u8));
     }
-
 
     fn mutations() -> Vec<Mutation> {
         vec![
@@ -531,7 +540,14 @@ mod dump_ext {
     fn dump_scope_roundtrip() {
         let path = tmp("scope");
         let _c = Cleanup(path.clone());
-        dump_scope(&path, meta(), mutations(), vec![src("a.py")], &recorder_with(6)).unwrap();
+        dump_scope(
+            &path,
+            meta(),
+            mutations(),
+            vec![src("a.py")],
+            &recorder_with(6),
+        )
+        .unwrap();
         let f = FlightFile::open(&path).unwrap();
         assert!(!f.partial);
         assert_eq!(f.mutations(), mutations());
@@ -546,7 +562,10 @@ mod dump_ext {
         dump_scope(&path, meta(), vec![], vec![], &recorder_with(1)).unwrap();
         let f = FlightFile::open(&path).unwrap();
         assert!(f.mutations().is_empty());
-        assert!(f.blocks.iter().all(|b| b.block_type != BlockType::Mutation as u8));
+        assert!(f
+            .blocks
+            .iter()
+            .all(|b| b.block_type != BlockType::Mutation as u8));
     }
 
     #[test]
@@ -568,7 +587,17 @@ mod dump_ext {
             let _c = Cleanup(path.clone());
             match name {
                 "v1" => dump(&path, meta(), &recorder_with(2)).unwrap(),
-                "v2" => dump_crash(&path, meta(), vec![], exceptions(), frames(), objects(), nondet(), &recorder_with(2)).unwrap(),
+                "v2" => dump_crash(
+                    &path,
+                    meta(),
+                    vec![],
+                    exceptions(),
+                    frames(),
+                    objects(),
+                    nondet(),
+                    &recorder_with(2),
+                )
+                .unwrap(),
                 "v3" => dump_nondet(&path, meta(), nondet(), vec![], &recorder_with(2)).unwrap(),
                 _ => dump_scope(&path, meta(), mutations(), vec![], &recorder_with(2)).unwrap(),
             }

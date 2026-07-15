@@ -1,9 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HeaderMeta {
-
     pub tool: String,
 
     pub flight_version: String,
@@ -31,7 +29,6 @@ mod tests {
 
     #[test]
     fn header_meta_is_a_msgpack_map_and_tolerates_new_fields() {
-
         #[derive(Serialize)]
         struct Future<'a> {
             tool: &'a str,

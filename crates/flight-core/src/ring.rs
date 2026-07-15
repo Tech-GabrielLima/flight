@@ -3,7 +3,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use flight_format::Event;
 
-
 pub struct Ring {
     buf: Box<[UnsafeCell<Event>]>,
 
@@ -11,13 +10,10 @@ pub struct Ring {
     mask: usize,
 }
 
-
 unsafe impl Sync for Ring {}
 unsafe impl Send for Ring {}
 
 impl Ring {
-
-
     pub fn new(cap: usize) -> Ring {
         let cap = cap.max(16).next_power_of_two();
         let zero = Event {
@@ -35,12 +31,10 @@ impl Ring {
         }
     }
 
-
     #[allow(dead_code)]
     pub fn capacity(&self) -> usize {
         self.buf.len()
     }
-
 
     #[allow(dead_code)]
     pub fn pushed(&self) -> usize {
@@ -51,10 +45,8 @@ impl Ring {
     pub fn push(&self, e: Event) {
         let i = self.head.fetch_add(1, Ordering::Relaxed) & self.mask;
 
-
         unsafe { *self.buf[i].get() = e };
     }
-
 
     pub fn drain(&self) -> (Vec<Event>, bool) {
         let head = self.head.load(Ordering::Relaxed);
@@ -63,12 +55,10 @@ impl Ring {
         let start = if wrapped { head - cap } else { 0 };
         let mut out = Vec::with_capacity(head - start);
         for i in start..head {
-
             out.push(unsafe { *self.buf[i & self.mask].get() });
         }
         (out, wrapped)
     }
-
 
     #[allow(dead_code)]
     pub fn clear(&self) {
@@ -135,7 +125,6 @@ mod tests {
         use std::sync::atomic::AtomicU64;
         use std::sync::Arc;
 
-
         let clock = Arc::new(AtomicU64::new(0));
         let rings: Vec<Arc<Ring>> = (0..4).map(|_| Arc::new(Ring::new(1024))).collect();
         let mut handles = Vec::new();
@@ -177,7 +166,6 @@ mod ring_ext {
         Event::new(EventKind::Line, 0, t as u32, 1, t)
     }
 
-
     #[test]
     fn capacity_min_is_sixteen() {
         assert_eq!(Ring::new(0).capacity(), 16);
@@ -201,7 +189,6 @@ mod ring_ext {
         }
     }
 
-
     #[test]
     fn pushed_starts_at_zero() {
         assert_eq!(Ring::new(64).pushed(), 0);
@@ -215,7 +202,6 @@ mod ring_ext {
         }
         assert_eq!(r.pushed(), 100);
     }
-
 
     #[test]
     fn drain_empty_ring_is_empty_and_unwrapped() {
@@ -261,7 +247,6 @@ mod ring_ext {
         assert_eq!(evs.last().unwrap().tstamp, 15);
     }
 
-
     #[test]
     fn one_past_full_wraps_and_keeps_tail() {
         let r = Ring::new(16);
@@ -301,7 +286,6 @@ mod ring_ext {
         assert_eq!(a.1, b.1);
     }
 
-
     #[test]
     fn clear_resets_pushed_and_drain() {
         let r = Ring::new(16);
@@ -329,7 +313,6 @@ mod ring_ext {
         assert!(!wrapped);
     }
 
-
     #[test]
     fn drain_preserves_all_event_fields() {
         let r = Ring::new(16);
@@ -342,7 +325,6 @@ mod ring_ext {
         assert_eq!(e.code_id, 0xDEAD);
         assert_eq!(e.tstamp, 9);
     }
-
 
     #[test]
     fn many_threads_each_own_ring_merge_is_dense() {
