@@ -120,7 +120,11 @@ def pytest_runtest_makereport(item, call):
         return
     path = item.stash.get(_PATH_KEY, None)
     if path:
-        report.sections.append(("Flight recording", f"black box: {path}"))
+        report.sections.append((
+            "Flight recording",
+            f"black box: {path}\n"
+            f"open:      python -m flight view --serve {path}   # or: flight inspect {path}",
+        ))
         report.user_properties.append(("flight", path))
 
 
@@ -132,4 +136,5 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     tr.write_sep("-", f"flight recorded {len(written)} black box(es)")
     for nodeid, path in written:
         tr.write_line(f"  {path}   ({nodeid})")
-    tr.write_line("  inspect one with:  python -m flight inspect <path>")
+    tr.write_line("  open one with:  python -m flight view --serve <path>   (inspect · why · what-if)")
+    tr.write_line("            or:   python -m flight inspect <path>")

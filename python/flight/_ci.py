@@ -61,8 +61,20 @@ def render_comment(flight_path, *, repro_hint: bool = True, title: str = "Flight
 
     if repro_hint:
         lines.append("")
-        lines.append("<sub>Reproduce locally: download the `.flight` artifact, then "
-                     "`python -m flight repro " + name + "` (or `flight inspect`, `flight explain`).</sub>")
+        lines.append("<details><summary>▶ Open this black box — see the exact state</summary>")
+        lines.append("")
+        lines.append("Download the **`flight-black-boxes`** artifact from this run, then:")
+        lines.append("")
+        lines.append("```console")
+        lines.append("pip install pyflight")
+        lines.append(f"flight view --serve {name}   # inspect · why · what-if & fix, in your browser")
+        lines.append(f"flight inspect {name}         # frames, locals, aliasing (no browser)")
+        lines.append(f"flight explain {name}         # heuristic root cause")
+        lines.append("```")
+        lines.append("")
+        lines.append("Or drop the file into the offline WASM viewer — it opens in any browser, "
+                     "nothing uploaded.")
+        lines.append("</details>")
 
     return "\n".join(lines)
 

@@ -559,7 +559,8 @@ basket of independent integrations; two are shipped.
 
 **A pytest plugin.** A failing test gives you a traceback; `pytest --flight` gives you its black box.
 The plugin records each test and, on failure, writes a full-detail `.flight` named after the test — then
-points at it in the failure report and the run summary. It is opt-in and never changes a test's outcome.
+points at it in the failure report and the run summary, **with the one command to open it**. It is opt-in
+and never changes a test's outcome.
 
 ```console
 $ pytest --flight
@@ -567,7 +568,8 @@ $ pytest --flight
 FAILED test_orders.py::test_refund - IndexError: list index out of range
 ------------------------------- Flight recording -------------------------------
 black box: .flight/test_orders.py_test_refund.flight
-$ python -m flight inspect .flight/test_orders.py_test_refund.flight
+open:      python -m flight view --serve .flight/test_orders.py_test_refund.flight   # or: flight inspect …
+$ flight view --serve .flight/test_orders.py_test_refund.flight   # the crash, why, what-if — in your browser
 ```
 
 `--flight-dir=DIR` chooses where they go; `--flight-lines` records per-line; `--flight-all` also keeps the
@@ -603,10 +605,13 @@ not any one framework's API. A request that raises leaves a full black box, tagg
 `traceparent` (passed per-request, so concurrent requests never clobber each other), before the exception
 reaches the framework's error handling.
 
-**Root cause on a red CI.** `flight ci` renders a Markdown root-cause comment from a crash `.flight` (reusing
-the `explain` heuristics and the fingerprint); the composite **GitHub Action** in
-[`.github/actions/flight`](.github/actions/flight) drops it into the job summary and, optionally, a PR
-comment, and uploads the `.flight` as an artifact.
+**Root cause on a red CI — where debugging pain actually happens.** `flight ci` renders a Markdown
+root-cause comment from a crash `.flight` (reusing the `explain` heuristics and the fingerprint); the
+composite **GitHub Action** in [`.github/actions/flight`](.github/actions/flight) drops it into the job
+summary and, optionally, a PR comment, and **uploads the `.flight` as an artifact**. The comment carries a
+one-command way to open that artifact — `flight view --serve` — so a red build becomes *"download the black
+box, open it, see the exact state that failed,"* with no change to anyone's habits. A copy-paste example
+workflow lives in [`.github/workflows/flight-example.yml`](.github/workflows/flight-example.yml).
 
 **The format is language-agnostic — so recorders aren't Python-only.** [`recorders/go`](recorders/) and
 [`recorders/node`](recorders/) write the **same** `.flight` format from Go and Node, read back unchanged by
