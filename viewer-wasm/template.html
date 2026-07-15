@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Flight — black box viewer</title>
+<title>flight — the black box for Python</title>
 <style>
   :root {
     color-scheme: dark;
@@ -13,20 +13,25 @@
     --glow: 0 0 0 1px rgba(88,166,255,.35), 0 24px 70px -28px rgba(88,166,255,.55);
     --mono: ui-monospace,"SF Mono",SFMono-Regular,"JetBrains Mono",Menlo,Consolas,monospace;
     --sans: ui-sans-serif,system-ui,-apple-system,"Segoe UI",Inter,Roboto,sans-serif;
+    --nav-h:60px;
   }
   * { box-sizing: border-box; }
+  html { scroll-behavior:smooth; }
   html,body { height:100%; }
   body {
-    margin:0; font:14px/1.55 var(--mono); color:var(--ink);
+    margin:0; font:14px/1.6 var(--sans); color:var(--ink);
     background:var(--bg); overflow-x:hidden; -webkit-font-smoothing:antialiased;
   }
-  /* ambient background: instrument glow + faint grid + a drifting aurora */
+  a { color:var(--accent); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+
+  /* ambient background */
   .bg { position:fixed; inset:0; z-index:-3; pointer-events:none;
     background:
       radial-gradient(1200px 620px at 12% -12%, rgba(88,166,255,.13), transparent 60%),
       radial-gradient(1000px 560px at 108% -6%, rgba(103,232,249,.09), transparent 58%),
       linear-gradient(180deg,#080b10,#070a0f 60%,#05070b); }
-  .bg-grid { position:fixed; inset:0; z-index:-2; pointer-events:none; opacity:.55;
+  .bg-grid { position:fixed; inset:0; z-index:-2; pointer-events:none; opacity:.5;
     background-image:
       linear-gradient(rgba(120,150,190,.06) 1px, transparent 1px),
       linear-gradient(90deg, rgba(120,150,190,.06) 1px, transparent 1px);
@@ -34,43 +39,135 @@
     -webkit-mask:radial-gradient(ellipse 90% 60% at 50% -5%, #000 20%, transparent 78%);
             mask:radial-gradient(ellipse 90% 60% at 50% -5%, #000 20%, transparent 78%); }
   .aurora { position:fixed; z-index:-2; width:60vw; height:60vw; left:8vw; top:-24vw;
-    background:radial-gradient(circle at 50% 50%, rgba(88,166,255,.20), transparent 62%);
+    background:radial-gradient(circle at 50% 50%, rgba(88,166,255,.18), transparent 62%);
     filter:blur(46px); pointer-events:none; animation:drift 22s ease-in-out infinite; }
 
-  main { max-width:1080px; margin:0 auto; padding:26px 24px 12px; }
+  /* ---- top navigation ---- */
+  .nav { position:sticky; top:0; z-index:50; display:flex; align-items:center; gap:18px;
+    height:var(--nav-h); padding:0 22px; border-bottom:1px solid rgba(140,170,210,.1);
+    background:rgba(9,13,19,.72); backdrop-filter:blur(14px); }
+  .brand { display:flex; align-items:center; gap:10px; color:var(--ink); font-weight:800;
+    letter-spacing:-.02em; font-size:18px; }
+  .brand:hover { text-decoration:none; }
+  .brand svg { width:28px; height:28px; }
+  .brandword { background:linear-gradient(100deg,#fff,#9fc6ff 55%,var(--cyan));
+    -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .tabs { display:flex; gap:2px; margin-left:auto; overflow-x:auto; scrollbar-width:none; }
+  .tabs::-webkit-scrollbar { display:none; }
+  .tabs a { color:var(--dim); font-size:13.5px; font-weight:500; padding:8px 12px;
+    border-radius:8px; white-space:nowrap; transition:.15s; position:relative; }
+  .tabs a:hover { color:var(--ink); background:rgba(140,170,210,.08); text-decoration:none; }
+  .tabs a.active { color:var(--ink); }
+  .tabs a.active::after { content:''; position:absolute; left:12px; right:12px; bottom:2px;
+    height:2px; border-radius:2px; background:linear-gradient(90deg,var(--accent),var(--cyan)); }
 
-  /* ---- hero ---- */
-  .hero { text-align:center; padding:46px 0 30px; transition:padding .5s ease; }
+  main { max-width:1000px; margin:0 auto; padding:6px 24px 40px; }
+  .page[hidden] { display:none; }
+  .page { animation:fade .35s ease both; }
+
+  /* ---- hero (overview) ---- */
+  .hero { text-align:center; padding:52px 0 26px; }
   .emblem { width:112px; height:112px; margin:0 auto 22px;
-    transition:width .5s ease, height .5s ease, margin .5s ease;
     filter:drop-shadow(0 10px 30px rgba(88,166,255,.35)); }
   .word { font-family:var(--sans); font-weight:800; letter-spacing:-.03em;
-    font-size:clamp(42px,7vw,68px); line-height:1; margin:0;
+    font-size:clamp(44px,7vw,72px); line-height:1; margin:0;
     background:linear-gradient(100deg,#ffffff 0%,#cfe4ff 30%,var(--accent) 62%,var(--cyan) 100%);
-    -webkit-background-clip:text; background-clip:text; color:transparent;
-    transition:font-size .5s ease; }
-  .word b { font-weight:800; }
-  .tag { font-family:var(--sans); color:var(--dim); font-size:clamp(15px,1.9vw,18px);
-    max-width:620px; margin:16px auto 0; line-height:1.5;
-    transition:opacity .4s ease, max-height .5s ease, margin .5s ease; }
+    -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .tag { color:var(--dim); font-size:clamp(15px,1.9vw,18px); max-width:640px;
+    margin:18px auto 0; line-height:1.55; }
   .tag b { color:var(--ink); font-weight:600; }
-  .kicker { font-family:var(--sans); display:inline-flex; gap:14px; align-items:center;
-    margin-top:20px; color:var(--faint); font-size:12.5px; letter-spacing:.02em;
-    transition:opacity .4s ease, max-height .5s ease, margin .5s ease; }
+  .kicker { display:inline-flex; gap:14px; align-items:center; flex-wrap:wrap; justify-content:center;
+    margin-top:22px; color:var(--faint); font-size:12.5px; }
   .kicker .dot { width:5px; height:5px; border-radius:50%; background:var(--faint); }
   .kicker .live { color:var(--ok); }
   .kicker .live::before { content:''; display:inline-block; width:7px; height:7px; border-radius:50%;
     background:var(--ok); margin-right:7px; box-shadow:0 0 0 0 rgba(74,222,128,.6);
     animation:beacon 2s infinite; vertical-align:middle; }
+  .cta { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:30px; }
+  .btn { display:inline-flex; align-items:center; gap:8px; font-family:var(--sans); font-size:14px;
+    font-weight:600; padding:11px 20px; border-radius:11px; cursor:pointer; transition:.2s;
+    border:1px solid var(--line); color:var(--ink);
+    background:linear-gradient(180deg,rgba(26,34,50,.9),rgba(18,24,38,.9)); }
+  .btn:hover { text-decoration:none; transform:translateY(-1px);
+    box-shadow:0 0 0 3px rgba(88,166,255,.14); border-color:var(--accent); }
+  .btn.primary { border:none; color:#04121f;
+    background:linear-gradient(100deg,var(--accent),var(--cyan)); }
+  .btn.primary:hover { box-shadow:0 10px 30px -8px rgba(88,166,255,.6); }
 
-  body.loaded .hero { padding:14px 0 6px; }
-  body.loaded .emblem { width:52px; height:52px; margin-bottom:8px; }
-  body.loaded .word { font-size:30px; }
-  body.loaded .tag, body.loaded .kicker { opacity:0; max-height:0; margin:0; overflow:hidden; }
+  /* ---- prose & content ---- */
+  .prose { padding:26px 0 10px; }
+  .prose > h1 { font-size:30px; letter-spacing:-.02em; margin:0 0 6px; }
+  .prose .lead { color:var(--dim); font-size:16px; max-width:720px; margin:0 0 8px; }
+  .prose h2 { font-size:20px; letter-spacing:-.01em; margin:34px 0 12px;
+    padding-top:14px; border-top:1px solid rgba(140,170,210,.09); }
+  .prose h3 { font-size:15px; margin:22px 0 8px; color:var(--ink); }
+  .prose p, .prose li { color:#c4cede; }
+  .prose ul { padding-left:20px; }
+  .prose li { margin:5px 0; }
+  .prose b { color:var(--ink); }
+  .prose a { font-weight:500; }
+  code { font-family:var(--mono); font-size:.92em; }
+  :not(pre) > code { background:rgba(88,166,255,.1); border:1px solid rgba(88,166,255,.16);
+    color:#bcd9ff; padding:1.5px 6px; border-radius:6px; }
+  pre { position:relative; background:linear-gradient(180deg,rgba(13,18,28,.85),rgba(9,13,20,.9));
+    border:1px solid rgba(140,170,210,.12); border-radius:12px; padding:16px 18px; margin:12px 0;
+    overflow-x:auto; box-shadow:0 12px 34px -22px rgba(0,0,0,.8); }
+  pre code { color:#d6e2f2; line-height:1.55; }
+  pre.console code { color:#c9d6e6; }
+  pre .c { color:var(--faint); }        /* comment / prompt */
+  pre .s { color:#a5d6a7; }             /* string */
+  pre .kw { color:#c58bff; }            /* keyword */
+  pre .fn { color:var(--accent); }      /* function / module */
+  pre .n { color:#ffcf8b; }             /* number */
+  pre .ok { color:var(--ok); }
+  pre .bad { color:var(--bad); }
 
-  /* ---- drop zone ---- */
-  #drop { position:relative; display:block; border-radius:18px; padding:52px 28px;
-    text-align:center; cursor:pointer; overflow:hidden; isolation:isolate;
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:14px;
+    margin:18px 0; }
+  .feat { background:linear-gradient(180deg,rgba(18,24,38,.6),rgba(12,18,28,.6));
+    border:1px solid rgba(140,170,210,.1); border-radius:14px; padding:16px 17px; transition:.2s; }
+  .feat:hover { transform:translateY(-3px); border-color:rgba(88,166,255,.4);
+    box-shadow:0 16px 40px -24px rgba(88,166,255,.5); }
+  .feat .ic { font-family:var(--mono); color:var(--accent); font-size:13px; font-weight:700; }
+  .feat h4 { margin:8px 0 5px; font-size:15px; }
+  .feat p { margin:0; color:var(--dim); font-size:13.5px; line-height:1.5; }
+
+  .reftable { width:100%; border-collapse:collapse; margin:12px 0; font-size:13.5px; }
+  .reftable td, .reftable th { text-align:left; padding:9px 10px; vertical-align:top;
+    border-bottom:1px solid rgba(140,170,210,.09); }
+  .reftable th { color:var(--faint); font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; }
+  .reftable tr:hover td { background:rgba(88,166,255,.04); }
+  .reftable td:first-child { white-space:nowrap; }
+  .reftable code { background:none; border:none; padding:0; color:var(--accent); }
+
+  /* ---- lessons ---- */
+  .lesson { display:flex; gap:16px; padding:20px 0; border-top:1px solid rgba(140,170,210,.09); }
+  .lesson:first-of-type { border-top:none; }
+  .lesson .num { flex:0 0 auto; width:38px; height:38px; border-radius:11px; display:grid;
+    place-items:center; font-family:var(--mono); font-weight:700; color:#04121f;
+    background:linear-gradient(120deg,var(--accent),var(--cyan)); }
+  .lesson .body { flex:1; min-width:0; }
+  .lesson h3 { margin:6px 0 4px; font-size:16px; }
+  .lesson .goal { color:var(--dim); font-size:13.5px; margin:0 0 8px; }
+
+  .callout { border:1px solid rgba(88,166,255,.22); background:rgba(88,166,255,.06);
+    border-radius:12px; padding:13px 16px; margin:16px 0; color:#c9dcf5; font-size:13.5px; }
+  .callout b { color:#dbe9ff; }
+
+  /* ---- creator ---- */
+  .about { display:flex; gap:22px; align-items:center; flex-wrap:wrap;
+    background:linear-gradient(180deg,rgba(18,24,38,.6),rgba(12,18,28,.6));
+    border:1px solid rgba(140,170,210,.1); border-radius:18px; padding:24px; margin:16px 0; }
+  .about .who h3 { margin:0 0 4px; font-size:22px; }
+  .about .who p { margin:0; color:var(--dim); }
+  .about .links { display:flex; gap:10px; margin-top:12px; flex-wrap:wrap; }
+
+  /* ---- viewer ---- */
+  .vhead { padding:34px 0 4px; }
+  .vhead h1 { font-size:26px; letter-spacing:-.02em; margin:0 0 4px; }
+  .vhead p { color:var(--dim); margin:0; max-width:680px; }
+  #drop { position:relative; display:block; border-radius:18px; padding:48px 28px;
+    text-align:center; cursor:pointer; overflow:hidden; isolation:isolate; margin-top:20px;
     transition:transform .25s ease, box-shadow .35s ease; }
   #drop::before { content:''; position:absolute; inset:0; z-index:0; opacity:.4;
     background:conic-gradient(from 0deg, transparent 0 58%, rgba(88,166,255,.95) 76%,
@@ -86,27 +183,25 @@
   #drop.hot::before { opacity:1; animation-duration:2.4s; }
   #drop.hot::after { background:linear-gradient(180deg,rgba(21,30,48,.95),rgba(14,21,34,.96)); }
   #drop input { display:none; }
-  .drop-ico { width:46px; height:46px; margin:0 auto 14px; color:var(--accent);
+  .drop-ico { width:44px; height:44px; margin:0 auto 14px; color:var(--accent);
     opacity:.95; transition:transform .3s ease; }
   #drop:hover .drop-ico { transform:translateY(-3px); }
-  #dropmsg { font-family:var(--sans); color:var(--ink); font-size:16px; }
+  #dropmsg { color:var(--ink); font-size:16px; }
   #dropmsg b { color:var(--accent); font-weight:600; }
-  .drop-sub { font-family:var(--sans); color:var(--faint); font-size:12.5px; margin-top:8px; }
-
-  /* ---- action bar ---- */
+  .drop-sub { color:var(--faint); font-size:12.5px; margin-top:8px; }
   .bar { display:flex; gap:10px; align-items:center; margin-top:16px; flex-wrap:wrap; }
-  button { display:inline-flex; align-items:center; gap:7px; font:inherit;
+  button { display:inline-flex; align-items:center; gap:7px; font:inherit; font-family:var(--sans);
     background:linear-gradient(180deg,rgba(26,34,50,.9),rgba(18,24,38,.9));
     color:var(--ink); border:1px solid var(--line); border-radius:9px;
     padding:7px 13px; cursor:pointer; transition:.2s; }
   button:hover { border-color:var(--accent); box-shadow:0 0 0 3px rgba(88,166,255,.14);
     transform:translateY(-1px); }
   button svg { width:15px; height:15px; }
-  #hint { font-family:var(--sans); color:var(--dim); font-size:13px; }
+  #hint { color:var(--dim); font-size:13px; }
 
-  /* ---- injected result cards ---- */
-  #out { padding-bottom:20px; }
-  .card { position:relative; background:linear-gradient(180deg,rgba(18,24,38,.62),rgba(12,18,28,.62));
+  /* result cards (from the WASM reader) */
+  #out { padding-bottom:8px; }
+  .card { position:relative; font-family:var(--mono); background:linear-gradient(180deg,rgba(18,24,38,.62),rgba(12,18,28,.62));
     backdrop-filter:blur(14px); border:1px solid rgba(140,170,210,.09); border-radius:16px;
     padding:18px 20px; margin-top:16px; box-shadow:0 18px 44px -26px rgba(0,0,0,.85);
     animation:rise .5s cubic-bezier(.2,.75,.2,1) both; }
@@ -116,22 +211,20 @@
   .card h2 { font-family:var(--sans); margin:0 0 12px; font-size:11.5px; letter-spacing:.11em;
     text-transform:uppercase; color:var(--faint); font-weight:700; }
   .exc { font-size:17px; line-height:1.4; }
-  .exc .type { color:var(--bad); font-weight:700;
-    text-shadow:0 0 24px rgba(255,123,114,.35); }
+  .exc .type { color:var(--bad); font-weight:700; text-shadow:0 0 24px rgba(255,123,114,.35); }
   .card:has(.exc) { border-color:rgba(255,123,114,.22);
     box-shadow:0 18px 44px -26px rgba(0,0,0,.85), inset 3px 0 0 -1px rgba(255,123,114,.6); }
   .chips { display:flex; flex-wrap:wrap; gap:6px; }
   .chips span { display:inline-block; background:rgba(88,166,255,.07);
     border:1px solid rgba(88,166,255,.18); border-radius:7px; padding:3px 9px;
-    color:#9fc6ff; font-size:12px; letter-spacing:.02em; transition:.2s; }
+    color:#9fc6ff; font-size:12px; transition:.2s; }
   .chips span:hover { background:rgba(88,166,255,.16); color:var(--ink); }
   table { width:100%; border-collapse:collapse; }
-  td,th { text-align:left; padding:8px 8px; border-bottom:1px solid rgba(140,170,210,.08);
-    vertical-align:top; }
+  td,th { text-align:left; padding:8px; border-bottom:1px solid rgba(140,170,210,.08); vertical-align:top; }
   tr:last-child td { border-bottom:none; }
   th { font-family:var(--sans); color:var(--faint); font-weight:600; font-size:11.5px;
     letter-spacing:.06em; text-transform:uppercase; }
-  tbody tr, table tr { transition:background .15s; }
+  table tr { transition:background .15s; }
   table tr:hover td { background:rgba(88,166,255,.05); }
   .where { color:var(--dim); }
   .k { color:var(--accent); font-weight:600; }
@@ -145,115 +238,546 @@
   ul.events .kind { display:inline-block; width:94px; color:var(--cyan); font-size:12px; }
   .cols { display:grid; grid-template-columns:2.2em 1fr 1fr; }
   .cmp { max-height:520px; overflow:auto; border:1px solid var(--line); border-radius:10px; }
-  .cmp .row { display:grid; grid-template-columns:2.4em 1fr 1fr;
-    border-bottom:1px solid rgba(140,170,210,.07); }
+  .cmp .row { display:grid; grid-template-columns:2.4em 1fr 1fr; border-bottom:1px solid rgba(140,170,210,.07); }
   .cmp .row > div { padding:4px 9px; white-space:pre-wrap; word-break:break-word; }
   .cmp .row:first-child { position:sticky; top:0; background:var(--panel);
-    font-family:var(--sans); font-size:11.5px; letter-spacing:.05em; text-transform:uppercase;
-    color:var(--faint); }
+    font-family:var(--sans); font-size:11.5px; letter-spacing:.05em; text-transform:uppercase; color:var(--faint); }
   .cmp .n { color:var(--faint); text-align:right; }
   .cmp .differ > div { background:rgba(245,196,81,.11); }
   .cmp .diverge > div { background:rgba(255,123,114,.22); font-weight:600; }
-  .cmp .diverge { scroll-margin-top:60px; }
+  .cmp .diverge { scroll-margin-top:70px; }
   .headline { font-family:var(--sans); margin:0 0 12px; padding:10px 14px; border-radius:10px;
     background:rgba(140,170,210,.08); }
   .headline.bad { background:rgba(255,123,114,.14); color:var(--bad); }
 
-  footer { font-family:var(--sans); color:var(--faint); text-align:center;
-    padding:26px 20px 34px; font-size:12px; }
-  footer .mark { color:var(--dim); }
+  footer { color:var(--faint); text-align:center; padding:30px 20px 40px; font-size:12px;
+    border-top:1px solid rgba(140,170,210,.08); margin-top:24px; }
   footer code { color:var(--dim); }
   ::selection { background:rgba(88,166,255,.28); }
   ::-webkit-scrollbar { width:11px; height:11px; }
-  ::-webkit-scrollbar-thumb { background:#233; border:3px solid transparent;
-    background-clip:content-box; border-radius:9px; }
+  ::-webkit-scrollbar-thumb { background:#233; border:3px solid transparent; background-clip:content-box; border-radius:9px; }
   ::-webkit-scrollbar-thumb:hover { background:#2f3f52; background-clip:content-box; }
 
   @keyframes spin { to { transform:rotate(360deg); } }
   @keyframes rise { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:none; } }
-  @keyframes drift { 0%,100% { transform:translate(0,0) scale(1); }
-    50% { transform:translate(10vw,4vw) scale(1.12); } }
-  @keyframes beacon { 0% { box-shadow:0 0 0 0 rgba(74,222,128,.5); }
-    70% { box-shadow:0 0 0 8px rgba(74,222,128,0); } 100% { box-shadow:0 0 0 0 rgba(74,222,128,0); } }
-  @keyframes floaty { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-2px); } }
+  @keyframes fade { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+  @keyframes drift { 0%,100% { transform:translate(0,0) scale(1); } 50% { transform:translate(10vw,4vw) scale(1.12); } }
+  @keyframes beacon { 0% { box-shadow:0 0 0 0 rgba(74,222,128,.5); } 70% { box-shadow:0 0 0 8px rgba(74,222,128,0); } 100% { box-shadow:0 0 0 0 rgba(74,222,128,0); } }
   @keyframes recblink { 0%,100% { opacity:1; } 50% { opacity:.25; } }
   @media (prefers-reduced-motion: reduce) {
-    .aurora,#drop::before,.emblem .radar,.card,.kicker .live::before { animation:none !important; }
+    html { scroll-behavior:auto; }
+    .aurora,#drop::before,.emblem g,.card,.page,.kicker .live::before { animation:none !important; }
   }
+  @media (max-width:640px) { main { padding:6px 16px 40px; } .nav { padding:0 12px; gap:10px; } }
 </style>
 </head>
 <body>
 <div class="bg"></div><div class="bg-grid"></div><div class="aurora"></div>
 
-<main>
-  <section class="hero">
-    <svg class="emblem" viewBox="0 0 96 96" fill="none" aria-label="flight">
-      <defs>
-        <radialGradient id="core" cx="50%" cy="42%" r="60%">
-          <stop offset="0%" stop-color="#eaf3ff"/><stop offset="55%" stop-color="#7db4ff"/>
-          <stop offset="100%" stop-color="#3b82f6"/>
-        </radialGradient>
-        <linearGradient id="arm" x1="48" y1="48" x2="48" y2="10" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#58a6ff" stop-opacity="0"/>
-          <stop offset="100%" stop-color="#8bd6ff"/>
-        </linearGradient>
-        <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="1.1"/>
-        </filter>
-      </defs>
-      <circle cx="48" cy="48" r="43" fill="rgba(88,166,255,.05)" stroke="rgba(88,166,255,.25)" stroke-width="1.5"/>
-      <circle cx="48" cy="48" r="35" fill="none" stroke="rgba(120,170,230,.35)" stroke-width="1.4" stroke-dasharray="1 6"/>
-      <g>
-        <animateTransform attributeName="transform" type="rotate" from="0 48 48" to="360 48 48" dur="4.5s" repeatCount="indefinite"/>
-        <path d="M48 48 L48 8 A40 40 0 0 0 20 20 Z" fill="rgba(88,166,255,.13)"/>
-        <line x1="48" y1="48" x2="48" y2="8" stroke="url(#arm)" stroke-width="2.2" stroke-linecap="round"/>
-        <circle cx="48" cy="10" r="2.4" fill="#bfe6ff"/>
-      </g>
-      <g filter="url(#soft)">
-        <path d="M48 26 L64 68 L48 59 L32 68 Z" fill="url(#core)"/>
-      </g>
-      <path d="M48 26 L64 68 L48 59 L32 68 Z" fill="url(#core)"/>
-      <circle cx="76" cy="20" r="4" fill="#ff5f57" style="animation:recblink 1.6s ease-in-out infinite"/>
+<header class="nav">
+  <a class="brand" href="#p=overview" data-p="overview" aria-label="flight home">
+    <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <circle cx="16" cy="16" r="14" fill="rgba(88,166,255,.06)" stroke="rgba(88,166,255,.4)" stroke-width="1.4"/>
+      <path d="M16 7 L22 25 L16 21 L10 25 Z" fill="#7db4ff"/>
     </svg>
-    <h1 class="word">flight</h1>
-    <p class="tag">The <b>black box</b> for Python. When a program dies, open the whole flight —
-      every frame, local, and object it held in its last moments — parsed <b>right here in your browser</b>.</p>
-    <div class="kicker">
-      <span class="live">reads locally</span><span class="dot"></span>
-      <span>Rust&nbsp;→&nbsp;WebAssembly</span><span class="dot"></span>
-      <span>nothing uploaded</span><span class="dot"></span>
-      <span>nothing installed</span>
+    <span class="brandword">flight</span>
+  </a>
+  <nav class="tabs">
+    <a data-p="overview" href="#p=overview">Overview</a>
+    <a data-p="start" href="#p=start">Get started</a>
+    <a data-p="docs" href="#p=docs">Docs</a>
+    <a data-p="examples" href="#p=examples">Examples</a>
+    <a data-p="learn" href="#p=learn">Learn</a>
+    <a data-p="viewer" href="#p=viewer">Viewer</a>
+    <a data-p="creator" href="#p=creator">Creator</a>
+  </nav>
+</header>
+
+<main>
+  <!-- ============================== OVERVIEW ============================== -->
+  <section class="page" id="page-overview">
+    <div class="hero">
+      <svg class="emblem" viewBox="0 0 96 96" fill="none" aria-label="flight">
+        <defs>
+          <radialGradient id="core" cx="50%" cy="42%" r="60%">
+            <stop offset="0%" stop-color="#eaf3ff"/><stop offset="55%" stop-color="#7db4ff"/>
+            <stop offset="100%" stop-color="#3b82f6"/>
+          </radialGradient>
+          <linearGradient id="arm" x1="48" y1="48" x2="48" y2="10" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#58a6ff" stop-opacity="0"/>
+            <stop offset="100%" stop-color="#8bd6ff"/>
+          </linearGradient>
+          <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.1"/></filter>
+        </defs>
+        <circle cx="48" cy="48" r="43" fill="rgba(88,166,255,.05)" stroke="rgba(88,166,255,.25)" stroke-width="1.5"/>
+        <circle cx="48" cy="48" r="35" fill="none" stroke="rgba(120,170,230,.35)" stroke-width="1.4" stroke-dasharray="1 6"/>
+        <g>
+          <animateTransform attributeName="transform" type="rotate" from="0 48 48" to="360 48 48" dur="4.5s" repeatCount="indefinite"/>
+          <path d="M48 48 L48 8 A40 40 0 0 0 20 20 Z" fill="rgba(88,166,255,.13)"/>
+          <line x1="48" y1="48" x2="48" y2="8" stroke="url(#arm)" stroke-width="2.2" stroke-linecap="round"/>
+          <circle cx="48" cy="10" r="2.4" fill="#bfe6ff"/>
+        </g>
+        <path d="M48 26 L64 68 L48 59 L32 68 Z" fill="url(#core)" filter="url(#soft)"/>
+        <path d="M48 26 L64 68 L48 59 L32 68 Z" fill="url(#core)"/>
+        <circle cx="76" cy="20" r="4" fill="#ff5f57" style="animation:recblink 1.6s ease-in-out infinite"/>
+      </svg>
+      <h1 class="word">flight</h1>
+      <p class="tag">The <b>black box</b> for Python. When a program dies, don't get a traceback and
+        <em>good luck</em> — get the whole recording: every frame, local, and object it held in its
+        last moments, navigable and shareable.</p>
+      <div class="kicker">
+        <span class="live">reads locally</span><span class="dot"></span>
+        <span>Rust core · sys.monitoring</span><span class="dot"></span>
+        <span>~65 ns / event</span><span class="dot"></span>
+        <span>MIT</span>
+      </div>
+      <div class="cta">
+        <a class="btn primary" data-p="start" href="#p=start">Get started →</a>
+        <a class="btn" data-p="viewer" href="#p=viewer">Open the viewer</a>
+        <a class="btn" data-p="learn" href="#p=learn">Learn flight</a>
+      </div>
+    </div>
+
+    <div class="prose">
+      <h2>Why it exists</h2>
+      <p>The real debugging loop is: add prints → try to reproduce → fail to reproduce → add more
+        prints → wait for it to happen again. A traceback tells you <b>where</b> a program died,
+        almost never <b>why</b>. flight records what actually happened, so the bug report writes
+        itself — and it's cheap enough to leave on in production.</p>
+
+      <h2>How it works</h2>
+      <p>One path in, one file out, many ways to read it.</p>
+      <pre class="console"><code><span class="c">   your program</span>
+        │   sys.monitoring (PEP 669) — native Rust callbacks, no Python frame
+        ▼
+   in-process · hot path · Rust
+   ┌──────────────────────────────────────────────────────────┐
+   │  is-this-mine? cache  →  lock-free ring buffer  →  clock   │
+   └───────────────────────────┬──────────────────────────────┘
+                               │   uncaught exception · or capture()
+                               ▼
+        object graph (aliasing ↔) + frames + source + exception chain
+                               ▼
+                       <span class="fn">crash.flight</span>   <span class="c">msgpack + zstd · versioned · shareable</span>
+             ┌─────────────────┼──────────────────────────┐
+             ▼                 ▼                           ▼
+       flight inspect    browser viewer (WASM)      why · diff · fix · what-if</code></pre>
+      <ol>
+        <li><b>Record cheap enough to leave on.</b> CPython's <code>sys.monitoring</code> calls straight
+          into native Rust — no Python callback frame, no FFI hop. The hot path takes no lock.</li>
+        <li><b>On a crash, write a black box — not a trace.</b> The object graph is serialized
+          identity-first, so the <em>same</em> object in two frames is one, marked <code>↔</code>;
+          every local, the exception chain and the source come too.</li>
+        <li><b>Read it anywhere.</b> The <code>.flight</code> is the spine: the CLI, the offline WASM
+          viewer, and every analysis only ever speak to the file — never to a live process.</li>
+      </ol>
+
+      <h2>What you can do with a <code>.flight</code></h2>
+      <div class="grid">
+        <div class="feat"><div class="ic">inspect</div><h4>See the crash</h4><p>Frames, locals, object graph and aliasing (<code>↔</code>) — the whole last moment.</p></div>
+        <div class="feat"><div class="ic">why</div><h4>Backward slice</h4><p>Ask <em>why is this value what it is?</em> and get the chain of writes back to the origin.</p></div>
+        <div class="feat"><div class="ic">diff</div><h4>Compare two runs</h4><p>The first point a good run and a bad run diverged — the cause boundary.</p></div>
+        <div class="feat"><div class="ic">bisect</div><h4>Find the commit</h4><p>Which commit introduced the bug — by fingerprint, or by replaying against each commit.</p></div>
+        <div class="feat"><div class="ic">generalize</div><h4>The boundary</h4><p>The exact value at which a recorded input flips the failure on and off.</p></div>
+        <div class="feat"><div class="ic">fix</div><h4>A proven patch</h4><p>Propose a fix and <em>verify</em> it by replaying the recorded tape with it applied.</p></div>
+        <div class="feat"><div class="ic">what-if</div><h4>Rewrite the past</h4><p>Change a past value, re-execute over the same recorded world, see the counterfactual.</p></div>
+        <div class="feat"><div class="ic">serve</div><h4>Fleet mode</h4><p>A dashboard aggregating thousands of black boxes, with regression detection.</p></div>
+      </div>
+
+      <h2>What it is (and isn't)</h2>
+      <p><b>It is</b> a scoped, post-mortem recorder with a first-class viewer, evolving toward
+        time-travel debugging. <b>It is not</b> an APM, a live debugger (that's <code>pdb</code>), or a
+        profiler.</p>
     </div>
   </section>
 
-  <label id="drop">
-    <div class="inner">
-      <svg class="drop-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
-      </svg>
-      <div id="dropmsg">Drop a <b>.flight</b> here — or two, to <b>compare</b>. Click to choose.</div>
-      <div class="drop-sub">the file never leaves this machine</div>
-    </div>
-    <input type="file" id="file" accept=".flight" multiple />
-  </label>
+  <!-- ============================== GET STARTED ============================== -->
+  <section class="page" id="page-start" hidden>
+    <div class="prose">
+      <h1>Get started</h1>
+      <p class="lead">A prebuilt wheel, no Rust toolchain needed. Install, leave it on, let a crash
+        write its own report.</p>
 
-  <div class="bar" id="bar" style="display:none">
-    <button id="copylink" title="A shareable link to this exact view (the file stays local).">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-           stroke-linecap="round" stroke-linejoin="round">
-        <path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/>
-        <path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
-      copy link to this view
-    </button>
-    <span id="hint"></span>
-  </div>
-  <div id="out"></div>
+      <h2>1 · Install</h2>
+      <pre class="console"><code><span class="c">$</span> pip install pyflight</code></pre>
+      <p>Wheels ship for Linux, macOS (Intel + Apple Silicon) and Windows. The native core is built
+        against CPython's <b>stable ABI (abi3)</b>, so one wheel per platform covers Python 3.12, 3.13
+        and every later 3.x. Optional extras:</p>
+      <pre class="console"><code><span class="c">$</span> pip install <span class="s">'pyflight[viewer]'</span>   <span class="c"># the Textual TUI viewer</span>
+<span class="c">$</span> pip install <span class="s">'pyflight[crypto]'</span>   <span class="c"># at-rest encryption of a .flight</span></code></pre>
+
+      <h2>2 · Leave it on</h2>
+      <p>Three lines. On an uncaught exception, a <code>.flight</code> is written automatically.</p>
+      <pre><code><span class="kw">import</span> <span class="fn">flight</span>
+<span class="fn">flight</span>.install()          <span class="c"># cheap enough to leave on</span>
+<span class="c">...</span>                       <span class="c"># run your program</span></code></pre>
+
+      <h2>3 · Or wrap a script without editing it</h2>
+      <pre class="console"><code><span class="c">$</span> python -m flight run yourscript.py
+<span class="c">...</span>
+<span class="bad">ZeroDivisionError: division by zero</span>
+<span class="c">[flight] recorded flight-57275.flight</span></code></pre>
+
+      <h2>4 · Read the black box</h2>
+      <pre class="console"><code><span class="c">$</span> python -m flight inspect flight-57275.flight
+exception   : <span class="bad">ZeroDivisionError: division by zero</span>
+frames      : 4 (crash first)
+  #0 compute_average  (crash.py:26)
+        numbers = list[0] ↔          <span class="c"># empty! this is the bug</span>
+  #1 summarize  (crash.py:32)
+        data = list[0] ↔             <span class="c"># the SAME empty list, aliased in</span></code></pre>
+      <p>The <code>↔</code> marks an object that is the <em>same</em> across frames. The black box
+        diagnosed the bug — and it never had to run twice.</p>
+
+      <div class="callout"><b>Prefer a picture?</b> Every <code>.flight</code> opens with nothing
+        installed in the offline <a data-p="viewer" href="#p=viewer">browser viewer</a> — drop the file
+        and read the crash right there.</div>
+
+      <h2>From source (contributors)</h2>
+      <pre class="console"><code><span class="c">$</span> python -m venv .venv <span class="kw">&&</span> . .venv/bin/activate
+<span class="c">$</span> pip install maturin pytest textual
+<span class="c">$</span> maturin develop --release      <span class="c"># compiles the Rust core, installs editable</span></code></pre>
+    </div>
+  </section>
+
+  <!-- ============================== DOCS ============================== -->
+  <section class="page" id="page-docs" hidden>
+    <div class="prose">
+      <h1>Documentation</h1>
+      <p class="lead">The complete surface: the Python API, the CLI, configuration, and the
+        <code>.flight</code> format.</p>
+
+      <h2>Python API</h2>
+      <table class="reftable">
+        <tr><th>Call</th><th>What it does</th></tr>
+        <tr><td><code>flight.install(**cfg)</code></td><td>Start recording via <code>sys.monitoring</code> + install the crash excepthook. Returns the active <code>Config</code>.</td></tr>
+        <tr><td><code>flight.uninstall()</code></td><td>Restore the interpreter to its previous state.</td></tr>
+        <tr><td><code>flight.capture(path=None)</code></td><td>Write a <code>.flight</code> right now — e.g. inside an <code>except</code> block for a handled error.</td></tr>
+        <tr><td><code>flight.stats()</code></td><td><code>{'total_events', 'threads', 'codes', 'ring_capacity'}</code> for the live recorder.</td></tr>
+        <tr><td><code>flight.read(path)</code></td><td>Open a <code>.flight</code>; query <code>.crash()</code>, <code>.frames</code>, <code>.recording()</code>, the object graph and aliasing.</td></tr>
+        <tr><td><code>with flight.record() as rec:</code></td><td>Scope time-travel: record every state write as a MUTATION; <code>rec.watch(obj)</code> tracks writes into a container.</td></tr>
+        <tr><td><code>with flight.deterministic(path):</code></td><td>Record all non-determinism (time/random/uuid/I/O/threads) so the run replays bit-for-bit.</td></tr>
+        <tr><td><code>flight.replay(path, fn)</code></td><td>Re-run <code>fn</code> feeding the recorded values back; raises <code>ReplayDivergence</code> if control flow differs.</td></tr>
+        <tr><td><code>flight.time_travel(path)</code></td><td>A reverse-debugger cursor: <code>step_back()</code>, <code>find_first("running &gt; 100")</code>, <code>state()</code>.</td></tr>
+        <tr><td><code>flight.minimize(path, fn)</code></td><td>ddmin over the tape → the minimal set of recorded values your bug actually needs.</td></tr>
+        <tr><td><code>flight.why(path, var=...)</code></td><td>A dynamic backward slice: how did this value come to be?</td></tr>
+        <tr><td><code>flight.what_if(path, fn, Override(...))</code></td><td>Edit a past value and re-execute forward over the deterministic tape (Python 3.13+).</td></tr>
+        <tr><td><code>flight.correlate(service=...)</code> / <code>flight.link(path)</code></td><td>Stamp the W3C trace context / link an upstream black box for cross-service crashes.</td></tr>
+        <tr><td><code>@flight.adapter("pkg.Type")</code></td><td>Register an adapter so your big types are summarized (shape/dtype/preview), not dumped.</td></tr>
+      </table>
+
+      <h2>Command line</h2>
+      <table class="reftable">
+        <tr><th>Command</th><th>What it answers</th></tr>
+        <tr><td><code>flight run script.py</code></td><td>Run a script with recording on; write a <code>.flight</code> on crash.</td></tr>
+        <tr><td><code>flight inspect f.flight</code></td><td>The crash: frames, locals, object graph, aliasing.</td></tr>
+        <tr><td><code>flight view f.flight</code></td><td>The interactive Textual TUI (needs the <code>[viewer]</code> extra).</td></tr>
+        <tr><td><code>flight timeline f.flight</code></td><td>A scope recording's mutation timeline (<code>--var</code> / <code>--who</code>).</td></tr>
+        <tr><td><code>flight why f.flight --var x</code></td><td>The backward slice for a value.</td></tr>
+        <tr><td><code>flight diff a b</code></td><td>The first point two runs diverged (<code>--html</code> for a shareable page).</td></tr>
+        <tr><td><code>flight bisect …</code></td><td>Which commit introduced the bug (passive corpus or active replay).</td></tr>
+        <tr><td><code>flight generalize f.flight</code></td><td>The boundary at which a recorded value flips the failure.</td></tr>
+        <tr><td><code>flight fix f.flight</code></td><td>Propose <b>and verify</b> a patch over the recorded tape.</td></tr>
+        <tr><td><code>flight explain f.flight</code></td><td>Heuristic root cause (<code>--llm</code> / <code>--prompt</code>).</td></tr>
+        <tr><td><code>flight repro f.flight [--pytest]</code></td><td>A self-verifying reproduction script / regression test.</td></tr>
+        <tr><td><code>flight debug f.flight</code></td><td>Reverse debugger: a DAP server (VS Code / PyCharm) or <code>--find</code> on the CLI.</td></tr>
+        <tr><td><code>flight fingerprint f.flight</code></td><td>A stable dedup id by frame + state.</td></tr>
+        <tr><td><code>flight trace ./crashes</code></td><td>The cross-service crash graph (by trace id).</td></tr>
+        <tr><td><code>flight encrypt / decrypt</code></td><td>Seal a <code>.flight</code> at rest with AES-256-GCM (<code>[crypto]</code> extra).</td></tr>
+        <tr><td><code>flight ci .flight</code></td><td>A Markdown root-cause comment for a red CI.</td></tr>
+        <tr><td><code>flight serve ./store</code></td><td>Fleet mode: a collector + index + dashboard.</td></tr>
+        <tr><td><code>pytest --flight</code></td><td>A <code>.flight</code> for every failing test (the plugin).</td></tr>
+      </table>
+
+      <h2>Configuration</h2>
+      <p>Pass to <code>flight.install(...)</code> or build a <code>flight.Config</code>:</p>
+      <table class="reftable">
+        <tr><th>Key</th><th>Meaning</th></tr>
+        <tr><td><code>ring_capacity</code></td><td>Events kept in the per-thread ring buffer.</td></tr>
+        <tr><td><code>output_dir</code></td><td>Where a <code>.flight</code> is written.</td></tr>
+        <tr><td><code>record_lines</code></td><td>Per-line detail (default off — call/return/exception granularity).</td></tr>
+        <tr><td><code>record_returns</code></td><td>Keep PY_RETURN events (on by default; off halves events on call-heavy code).</td></tr>
+        <tr><td><code>deny_prefixes</code> / <code>force_include</code></td><td>The policy that keeps stdlib and site-packages out of the recording.</td></tr>
+        <tr><td><code>capture_deadline_ms</code> / <code>capture_max_bytes</code></td><td>The crash-capture time and size budget (a giant object can't hang or blow up capture).</td></tr>
+        <tr><td><code>max_str</code> / <code>max_container</code> / <code>max_depth</code> / <code>repr_limit</code></td><td>Per-value limits for the object-graph serializer.</td></tr>
+        <tr><td><code>scrub_patterns</code></td><td>Names whose values are redacted before any byte is written (P5).</td></tr>
+        <tr><td><code>overhead_slo</code> / <code>daemon</code> / <code>correlation</code></td><td>Production knobs: the SLO governor, the crash-surviving supervisor, trace correlation.</td></tr>
+      </table>
+
+      <h2>The <code>.flight</code> format</h2>
+      <p>Versioned, append-only and truncation-tolerant: a header, typed blocks (<b>msgpack + zstd</b>)
+        and an optional footer index. A <code>.flight</code> holds the process environment (META), the
+        event ring, the exception chain, every frame with its locals, the identity-preserving object
+        graph, and the source of every file involved — so the values still make sense on another
+        machine. New readers read old files; old readers skip unknown blocks.</p>
+
+      <h2>The five inviolables</h2>
+      <ul>
+        <li><b>P1 — Primum non nocere.</b> The recorder never crashes the program it records.</li>
+        <li><b>P2 — Honest, bounded overhead.</b> &lt;5% target; an SLO governor can defend a ceiling.</li>
+        <li><b>P3 — The format is the spine.</b> Engine and viewer only speak through it.</li>
+        <li><b>P4 — Every phase is useful on its own.</b></li>
+        <li><b>P5 — Privacy by design.</b> Redaction of sensitive fields is a day-one feature.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============================== EXAMPLES ============================== -->
+  <section class="page" id="page-examples" hidden>
+    <div class="prose">
+      <h1>Examples</h1>
+      <p class="lead">Copy-paste starting points for each capability.</p>
+
+      <h2>Capture a handled error</h2>
+      <pre><code><span class="kw">import</span> <span class="fn">flight</span>
+<span class="fn">flight</span>.install()
+<span class="kw">try</span>:
+    risky()
+<span class="kw">except</span> Exception:
+    <span class="fn">flight</span>.capture(path=<span class="s">"handled.flight"</span>)   <span class="c"># a black box without crashing</span>
+    <span class="kw">raise</span></code></pre>
+
+      <h2>Time-travel a scope</h2>
+      <pre><code><span class="kw">with</span> <span class="fn">flight</span>.record() <span class="kw">as</span> rec:
+    cache = {}
+    rec.watch(cache, name=<span class="s">"cache"</span>)     <span class="c"># track writes into this container</span>
+    running = <span class="n">0</span>
+    <span class="kw">for</span> it <span class="kw">in</span> [<span class="n">5</span>, <span class="n">3</span>, <span class="n">8</span>]:
+        running = running + it        <span class="c"># a local rebind, recorded as a MUTATION</span>
+        cache[it] = running           <span class="c"># a container write, recorded too</span></code></pre>
+      <pre class="console"><code><span class="c">$</span> python -m flight timeline --var running flight-scope-*.flight
+history of local 'running' (4 writes):
+  #3   tt.py:8    running = 0
+  #11  tt.py:10   running = 16       <span class="c"># ← how it evolved, step by step</span></code></pre>
+
+      <h2>Deterministic replay</h2>
+      <pre><code><span class="kw">import</span> <span class="fn">flight</span>, <span class="fn">time</span>, <span class="fn">random</span>
+
+<span class="kw">def</span> <span class="fn">work</span>():
+    <span class="kw">return</span> time.time(), random.random()
+
+<span class="kw">with</span> <span class="fn">flight</span>.deterministic(<span class="s">"run.flight"</span>):
+    original = work()
+
+<span class="kw">assert</span> <span class="fn">flight</span>.replay(<span class="s">"run.flight"</span>, work) == original   <span class="c"># identical, though time moved on</span></code></pre>
+
+      <h2>Ask why a value is what it is</h2>
+      <pre class="console"><code><span class="c">$</span> python -m flight why crash.flight --var numbers
+numbers ([]) — how this value came to be:
+  #0 compute_average  crash.py:26   parameter — comes from the caller (aliased below)
+       ↔ the SAME object as 'data' in summarize (frame #1)
+       ↰ is datasets['evening'] in main (frame #2)  (dict[3])
+  ⇒ root: 'datasets' was dict[3] in main (frame #2)</code></pre>
+
+      <h2>Compare two runs</h2>
+      <pre class="console"><code><span class="c">$</span> python -m flight diff run_ok.flight run_fail.flight
+comparing nondets: diverged at step 7 (12 steps compared)
+  random.random answered differently
+  left : random.random [f] 0.8313
+  right: random.random [f] 0.1174</code></pre>
+
+      <h2>A patch that proves itself</h2>
+      <pre class="console"><code><span class="c">$</span> python -m flight fix crash.flight
+  <span class="ok">+</span>    <span class="kw">if</span> <span class="kw">not</span> numbers:
+  <span class="ok">+</span>        <span class="kw">return</span> 0.0
+verification over the recorded tape:
+  <span class="ok">✓</span> the crash no longer reproduces
+  <span class="ok">✓</span> no boundary divergence (time/random/IO identical)
+  ⇒ <span class="ok">FIX VERIFIED</span></code></pre>
+
+      <h2>What-if: rewrite the past</h2>
+      <pre><code><span class="c"># The recorded run crashed because `data` was empty. What if it weren't?</span>
+wi = <span class="fn">flight</span>.what_if(<span class="s">"run.flight"</span>, compute, <span class="fn">flight</span>.Override(<span class="s">"data"</span>, [<span class="n">2</span>, <span class="n">4</span>], line=<span class="n">42</span>))
+<span class="fn">print</span>(wi.render())
+<span class="c">#   before: raised ZeroDivisionError: division by zero</span>
+<span class="c">#   after:  returned 2067.0   → the change alters the outcome.</span></code></pre>
+
+      <h2>A black box for every failing test</h2>
+      <pre class="console"><code><span class="c">$</span> pytest --flight
+FAILED test_orders.py::test_refund - IndexError: list index out of range
+------------------------------- Flight recording -------------------------------
+black box: .flight/test_orders.py_test_refund.flight</code></pre>
+
+      <h2>A <code>.flight</code> per HTTP 500</h2>
+      <pre><code><span class="kw">from</span> <span class="fn">flight._web</span> <span class="kw">import</span> FlightWSGI, FlightASGI
+app = FlightWSGI(app)      <span class="c"># Flask / Django / Pyramid …</span>
+app = FlightASGI(app)      <span class="c"># FastAPI / Starlette / Quart …</span></code></pre>
+    </div>
+  </section>
+
+  <!-- ============================== LEARN ============================== -->
+  <section class="page" id="page-learn" hidden>
+    <div class="prose">
+      <h1>Learn flight</h1>
+      <p class="lead">A path from your first recording to production time-travel. Each lesson stands on
+        its own — do them in order, or jump to the one you need.</p>
+
+      <div class="lesson"><div class="num">1</div><div class="body">
+        <h3>Record your first flight</h3>
+        <p class="goal">Goal: turn a crash into a file, without changing how you run anything.</p>
+        <p>Add <code>flight.install()</code> at the top of your program, or run it with
+          <code>python -m flight run script.py</code>. Trigger the bug once. On the uncaught exception,
+          flight writes a <code>.flight</code> next to you and prints its name. That file is the whole
+          last moment of the process — you never have to reproduce the bug again.</p>
+      </div></div>
+
+      <div class="lesson"><div class="num">2</div><div class="body">
+        <h3>Read a black box</h3>
+        <p class="goal">Goal: find the bug in the recording, not in your head.</p>
+        <p>Run <code>flight inspect crash.flight</code>. Read the frames crash-first, look at each frame's
+          locals, and watch for the <code>↔</code> marker — it means the object is <em>the same</em>
+          across frames (aliasing), which is where surprising bugs hide. Prefer a picture? Drop the file
+          into the <a data-p="viewer" href="#p=viewer">browser viewer</a>.</p>
+      </div></div>
+
+      <div class="lesson"><div class="num">3</div><div class="body">
+        <h3>Watch state evolve (scope time-travel)</h3>
+        <p class="goal">Goal: see how a variable got its value, write by write.</p>
+        <p>Wrap the suspicious code in <code>with flight.record() as rec:</code> and
+          <code>rec.watch(...)</code> the containers you care about. Every write is recorded with its
+          exact line. Afterwards, <code>flight timeline --var x</code> shows the full history of
+          <code>x</code>; <code>--who cache</code> shows who wrote into a container and when.</p>
+      </div></div>
+
+      <div class="lesson"><div class="num">4</div><div class="body">
+        <h3>Make a flaky bug deterministic</h3>
+        <p class="goal">Goal: reproduce a "fails 1% of the time" bug every single time.</p>
+        <p>Run inside <code>with flight.deterministic("run.flight"):</code>. flight records the clock,
+          randomness, uuids, file/pipe/socket reads and the thread lock order. <code>flight.replay(path,
+          fn)</code> then re-runs your function feeding those values back, bit-for-bit — and raises
+          <code>ReplayDivergence</code> at the exact step if control flow ever differs.</p>
+      </div></div>
+
+      <div class="lesson"><div class="num">5</div><div class="body">
+        <h3>Step backward through time</h3>
+        <p class="goal">Goal: put a breakpoint in the past.</p>
+        <p><code>flight debug scope.flight --find "running &gt; 100"</code> jumps to the write where a value
+          first crossed a threshold. Or start the DAP server (<code>flight debug scope.flight</code>) and
+          VS Code / PyCharm show real <b>Step Back</b> and <b>Reverse</b> buttons driven by the
+          recording — no live process.</p>
+      </div></div>
+
+      <div class="lesson"><div class="num">6</div><div class="body">
+        <h3>Compare & shrink</h3>
+        <p class="goal">Goal: isolate the cause to the smallest possible thing.</p>
+        <p><code>flight diff ok.flight fail.flight</code> points at the first place two runs diverged.
+          <code>flight.minimize(path, fn)</code> then runs delta debugging over the tape until only the
+          load-bearing values remain — "your bug needs only these 3 of the 500 recorded values".</p>
+      </div></div>
+
+      <div class="lesson"><div class="num">7</div><div class="body">
+        <h3>Ask "why" and "what if"</h3>
+        <p class="goal">Goal: reason about causes and counterfactuals.</p>
+        <p><code>flight why --var x</code> builds the backward slice of writes and aliasings that produced
+          a value. <code>flight.what_if(...)</code> overwrites a past value and re-executes over the same
+          recorded world, telling you whether the outcome changes, diverges, or never reached the point
+          (Python 3.13+).</p>
+      </div></div>
+
+      <div class="lesson"><div class="num">8</div><div class="body">
+        <h3>Leave it on in production</h3>
+        <p class="goal">Goal: a recorder you trust under load.</p>
+        <p><code>flight.install(overhead_slo=0.03, daemon=True)</code> caps overhead as an SLO and keeps a
+          supervisor that promotes a checkpoint to a black box even on <code>SIGKILL</code>/OOM.
+          <code>flight.correlate(service=...)</code> stamps the W3C trace context so
+          <code>flight trace</code> can stitch a cross-service crash together.</p>
+      </div></div>
+
+      <div class="lesson"><div class="num">9</div><div class="body">
+        <h3>Prove and verify a fix</h3>
+        <p class="goal">Goal: close the loop — from crash to a patch you can trust.</p>
+        <p><code>flight fix crash.flight</code> proposes a unified diff and then re-executes the
+          deterministic tape with it applied: crash gone <b>and</b> no divergence → <code>VERIFIED</code>.
+          Turn it into a permanent guard with <code>flight repro --pytest</code>.</p>
+      </div></div>
+
+      <div class="callout"><b>Next:</b> open the <a data-p="docs" href="#p=docs">Docs</a> for the full API
+        and CLI, or try any of these against a real file in the <a data-p="viewer" href="#p=viewer">Viewer</a>.</div>
+    </div>
+  </section>
+
+  <!-- ============================== VIEWER ============================== -->
+  <section class="page" id="page-viewer" hidden>
+    <div class="vhead">
+      <h1>Black box viewer</h1>
+      <p>Drop a <code>.flight</code> file — or two, to <b>compare</b>. It's parsed <b>in your browser</b>
+        by the Rust reader compiled to WebAssembly. Nothing is uploaded, nothing installed.</p>
+    </div>
+
+    <label id="drop">
+      <div class="inner">
+        <svg class="drop-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+        </svg>
+        <div id="dropmsg">Drop a <b>.flight</b> here — or two, to <b>compare</b>. Click to choose.</div>
+        <div class="drop-sub">the file never leaves this machine</div>
+      </div>
+      <input type="file" id="file" accept=".flight" multiple />
+    </label>
+
+    <div class="bar" id="bar" style="display:none">
+      <button id="copylink" title="A shareable link to this exact view (the file stays local).">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/>
+          <path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
+        copy link to this view
+      </button>
+      <span id="hint"></span>
+    </div>
+    <div id="out"></div>
+  </section>
+
+  <!-- ============================== CREATOR ============================== -->
+  <section class="page" id="page-creator" hidden>
+    <div class="prose">
+      <h1>The creator</h1>
+      <div class="about">
+        <svg class="emblem" style="width:84px;height:84px;margin:0" viewBox="0 0 96 96" fill="none">
+          <circle cx="48" cy="48" r="43" fill="rgba(88,166,255,.05)" stroke="rgba(88,166,255,.3)" stroke-width="1.5"/>
+          <circle cx="48" cy="48" r="35" fill="none" stroke="rgba(120,170,230,.35)" stroke-width="1.4" stroke-dasharray="1 6"/>
+          <path d="M48 26 L64 68 L48 59 L32 68 Z" fill="#7db4ff"/>
+        </svg>
+        <div class="who">
+          <h3>Gabriel Lima</h3>
+          <p>Builds systems from scratch to understand them to the metal — from CUDA kernels and a
+            micro-PyTorch to a Raft implementation and this recorder.</p>
+          <div class="links">
+            <a class="btn" href="https://github.com/Tech-GabrielLima/flight">GitHub · Tech-GabrielLima</a>
+            <a class="btn" href="https://pypi.org/project/pyflight/">PyPI · pyflight</a>
+          </div>
+        </div>
+      </div>
+
+      <h2>Why flight was built this way</h2>
+      <p>flight is a from-scratch project with a deliberate split: a lock-free ring buffer and the
+        <code>.flight</code> writer live in <b>Rust</b> (via PyO3), fed by CPython's
+        <code>sys.monitoring</code>, while the reading experience is treated as a first-class half of the
+        product. It grew phase by phase — foundation, the full black box, a TUI viewer, scope
+        time-travel, deterministic replay, a reverse debugger, comparison &amp; delta debugging, an
+        intelligence layer, a production-grade black box, a whole ecosystem, and finally what-if
+        debugging and a fleet dashboard — each one useful on its own.</p>
+
+      <h2>The bets behind it</h2>
+      <ul>
+        <li><b>Instrumentation can be cheap.</b> <code>sys.monitoring</code> (PEP 669) finally makes it
+          affordable to leave a recorder on, because a callback can disable itself at a cold location.</li>
+        <li><b>Debugging is 50% engine, 50% reading.</b> So a viewer isn't an afterthought — it's a
+          planned half of the work, and it runs offline in your browser.</li>
+        <li><b>The file is the viral vector.</b> A shareable <code>.flight</code> means "open this and
+          you'll see everything" — which is exactly what this page is for.</li>
+      </ul>
+
+      <div class="callout">This project is open source under the MIT license. Issues, ideas and stars
+        are welcome on <a href="https://github.com/Tech-GabrielLima/flight">GitHub</a>.</div>
+    </div>
+  </section>
 </main>
 
 <footer>
-  <span class="mark">✦</span> runs entirely offline · powered by <code>flight-reader</code>
-  (Rust → WASM) · pure-Rust zstd
+  <span style="color:var(--dim)">✦</span> flight runs entirely offline · this page is a single
+  self-contained HTML file · powered by <code>flight-reader</code> (Rust → WASM) · pure-Rust zstd · MIT
 </footer>
 
 <script>
@@ -445,11 +969,33 @@ document.getElementById('copylink').addEventListener('click', async () => {
 })();
 </script>
 <script>
-// Collapse the hero once a recording is on screen, so the data leads.
+// -- tab router: pages switch on the #p= hash param, coexisting with the
+// viewer's own files/step params (writeHash preserves them). --
 (function(){
-  const out = document.getElementById('out');
-  new MutationObserver(() => document.body.classList.toggle('loaded', out.childElementCount > 0))
-    .observe(out, { childList: true });
+  const PAGES = ['overview','start','docs','examples','learn','viewer','creator'];
+  const TITLES = { overview:'flight — the black box for Python', start:'Get started · flight',
+    docs:'Docs · flight', examples:'Examples · flight', learn:'Learn · flight',
+    viewer:'Viewer · flight', creator:'Creator · flight' };
+  const getP = () => new URLSearchParams(location.hash.slice(1)).get('p');
+  const hasFiles = () => !!new URLSearchParams(location.hash.slice(1)).get('files');
+  function show(p){
+    if (!PAGES.includes(p)) p = hasFiles() ? 'viewer' : 'overview';
+    PAGES.forEach(x => { const el = document.getElementById('page-'+x); if (el) el.hidden = x!==p; });
+    document.querySelectorAll('.tabs a').forEach(a => a.classList.toggle('active', a.dataset.p===p));
+    document.title = TITLES[p] || TITLES.overview;
+    window.scrollTo({ top:0, behavior:'auto' });
+  }
+  // any element with data-p navigates without clobbering other hash params
+  document.addEventListener('click', e => {
+    const t = e.target.closest('[data-p]');
+    if (!t) return;
+    e.preventDefault();
+    const h = new URLSearchParams(location.hash.slice(1));
+    h.set('p', t.dataset.p);
+    location.hash = h.toString();
+  });
+  window.addEventListener('hashchange', () => show(getP()));
+  show(getP());
 })();
 </script>
 </body>
