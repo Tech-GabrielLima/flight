@@ -370,6 +370,7 @@
   .wf-form input { min-width:190px; }
   #wf-go { margin-left:auto; background:linear-gradient(100deg,var(--accent),var(--cyan)); color:#04121f;
     border:none; font-weight:600; }
+  #fix-go { background:linear-gradient(100deg,var(--ok),#22d3a8); color:#04121f; border:none; font-weight:600; }
   .wf-res { margin-top:16px; padding:14px 16px; border:1px solid rgba(140,170,210,.12); border-radius:10px;
     font-family:var(--mono); font-size:13px; line-height:1.6; }
   .wf-line { padding:2px 0; }
@@ -1190,8 +1191,10 @@ function render(s, name) {
         `<pre><code>${esc(d.fix)}</code></pre></div>`;
     }
     html += `<div class="verify"><b>Prove it — don't guess.</b> <code>flight why --var ${primary}</code>
-      traces exactly where the value came from; <code>flight fix crash.flight</code> proposes a patch and
-      <em>re-runs the recorded tape</em> to confirm the crash is gone with no behaviour change.</div></div>`;
+      traces exactly where the value came from; then let flight propose a patch and <em>verify</em> it by
+      re-running the recorded tape — crash gone, with no behaviour change.</div>
+      <div style="margin-top:14px"><button id="fix-go">generate &amp; verify a fix →</button></div>
+      <div id="fix-res" class="wf-res" style="display:none;margin-top:12px"></div></div>`;
   }
 
   // 2b — what-if: change a value and re-run (real under `flight view --serve`)
@@ -1291,12 +1294,38 @@ function render(s, name) {
         `<div class="wf-verdict">${d.applied ? (d.changed ? '→ the change alters the outcome.' : '→ same outcome.') : '⚠ the override point was never reached.'}</div>` +
         (d.pep667 ? '' : `<div class="muted">(live-local override needs Python 3.13+)</div>`);
     } catch (e) {
+      if (window.FLIGHT_ENGINE) { res.innerHTML = `<span class="bad">engine error:</span> ${esc(String(e))}`; return; }
       res.innerHTML = `<div class="wf-off"><b>What-if re-executes your code, so it needs the local engine</b> —
         it can't run from a static file. Start it once and this console goes live against the real replay:</div>
         <div class="fixbox"><div class="fixhead"><span>terminal</span><button class="copy" data-copy="flight view --serve ${esc(name)}">copy</button></div>
         <pre><code>flight view --serve ${esc(name)}</code></pre></div>
         <div class="muted">The engine holds the recorded world (time / random / I/O) constant and replays your
         function with the value changed — the true counterfactual (Phase 14).</div>`;
+      wireCopy(res);
+    }
+  });
+
+  // fix — ask the engine to propose AND verify a patch over the recorded tape
+  const fixgo = document.getElementById('fix-go');
+  if (fixgo) fixgo.addEventListener('click', async () => {
+    const res = document.getElementById('fix-res');
+    res.style.display = ''; res.classList.remove('muted');
+    res.textContent = 'proposing a patch and verifying it over the recorded tape…';
+    try {
+      const r = await fetch('/fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      if (!r.ok) throw new Error('no engine');
+      const d = await r.json();
+      if (!d.ok) { res.innerHTML = `<span class="bad">error:</span> ${esc(d.error || '?')}`; return; }
+      const tag = d.status === 'VERIFIED' ? '<span class="wf-b">VERIFIED ✓</span>'
+        : d.status === 'CHANGES_BEHAVIOR' ? '<span class="wf-a">CHANGES BEHAVIOR ⚠</span>'
+        : d.status === 'REJECTED' ? '<span class="bad">REJECTED ✗</span>' : esc(d.status || '');
+      res.innerHTML = `<div style="margin-bottom:8px">${tag}</div><pre style="margin:0"><code>${esc(d.report || '')}</code></pre>`;
+    } catch (e) {
+      if (window.FLIGHT_ENGINE) { res.innerHTML = `<span class="bad">engine error:</span> ${esc(String(e))}`; return; }
+      res.innerHTML = `<div class="wf-off"><b>Generating a proven patch re-runs your code — it needs the engine.</b>
+        In the terminal:</div>
+        <div class="fixbox"><div class="fixhead"><span>terminal</span><button class="copy" data-copy="flight fix ${esc(name)}">copy</button></div>
+        <pre><code>flight fix ${esc(name)}</code></pre></div>`;
       wireCopy(res);
     }
   });
@@ -1443,6 +1472,23 @@ document.getElementById('copylink').addEventListener('click', async () => {
   });
   window.addEventListener('hashchange', () => show(getP()));
   show(getP());
+})();
+</script>
+<!--__FLIGHT_INJECT__-->
+<script>
+// When served by `flight view --serve`, the server injects window.__FLIGHT__
+// (the recording, base64) above and sets engine:true — so this same page opens
+// the file automatically and the what-if / fix consoles run for real, same-origin.
+(async function () {
+  const F = window.__FLIGHT__;
+  if (!F || !F.data) return;                 // opened as a static file: nothing to do
+  window.FLIGHT_ENGINE = !!F.engine;
+  const h = new URLSearchParams(location.hash.slice(1)); h.set('p', 'viewer'); location.hash = h.toString();
+  try {
+    render(await parseFlight(Uint8Array.from(atob(F.data), c => c.charCodeAt(0))), F.name || 'recording.flight');
+    document.getElementById('bar').style.display = '';
+    document.getElementById('hint').textContent = F.engine ? 'inspect · why · what-if & fix engine live' : 'inspect view';
+  } catch (e) { document.getElementById('out').innerHTML = `<div class="card err">${e}</div>`; }
 })();
 </script>
 </body>

@@ -251,6 +251,37 @@ document.getElementById('go').addEventListener('click', async () => {{
 """
 
 
+def _rich_page(flight_path):
+    """The full browser viewer, shipped in the wheel, with the recording embedded
+    and the engine flag set — so the same page serves inspect / why / what-if / fix.
+    Returns None when the packaged page isn't present (fall back to the minimal one)."""
+    import base64
+    import json
+    from pathlib import Path
+
+    html_path = Path(__file__).with_name("_viewer.html")
+    if not html_path.exists():
+        return None
+    html = html_path.read_text(encoding="utf-8")
+    data = base64.b64encode(Path(flight_path).read_bytes()).decode("ascii")
+    inject = (
+        "<script>window.__FLIGHT__ = {data:" + json.dumps(data)
+        + ", name:" + json.dumps(Path(flight_path).name) + ", engine:true};</script>"
+    )
+    marker = "<!--__FLIGHT_INJECT__-->"
+    return html.replace(marker, inject) if marker in html else html.replace("</body>", inject + "</body>")
+
+
+def run_fix(flight_path) -> dict:
+    from ._agent import fix
+
+    try:
+        r = fix(flight_path)
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    return {"ok": True, "status": r.status, "patch": r.patch or "", "report": r.report()}
+
+
 def make_whatif_server(flight_path, host: str = "127.0.0.1", port: int = 8070):
     import json
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -268,12 +299,14 @@ def make_whatif_server(flight_path, host: str = "127.0.0.1", port: int = 8070):
 
         def do_GET(self):
             if self.path.split("?")[0].rstrip("/") in ("", "/"):
-                self._send(200, _whatif_page(flight_path).encode(), "text/html; charset=utf-8")
+                page = _rich_page(flight_path) or _whatif_page(flight_path)
+                self._send(200, page.encode(), "text/html; charset=utf-8")
             else:
                 self._send(404, b'{"error":"not found"}')
 
         def do_POST(self):
-            if self.path.rstrip("/") != "/whatif":
+            path = self.path.rstrip("/")
+            if path not in ("/whatif", "/fix"):
                 self._send(404, b'{"error":"not found"}')
                 return
             length = int(self.headers.get("Content-Length", 0))
@@ -282,10 +315,13 @@ def make_whatif_server(flight_path, host: str = "127.0.0.1", port: int = 8070):
             except Exception:
                 self._send(400, b'{"ok":false,"error":"bad json"}')
                 return
-            out = run_whatif(
-                flight_path, req.get("var", ""), req.get("value"),
-                req.get("line", 0), nth=req.get("nth", 1), qualname=req.get("qualname"),
-            )
+            if path == "/fix":
+                out = run_fix(flight_path)
+            else:
+                out = run_whatif(
+                    flight_path, req.get("var", ""), req.get("value"),
+                    req.get("line", 0), nth=req.get("nth", 1), qualname=req.get("qualname"),
+                )
             self._send(200 if out.get("ok") else 422, json.dumps(out).encode())
 
     return ThreadingHTTPServer((host, port), Handler)

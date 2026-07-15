@@ -42,3 +42,5 @@ module-name = "flight._core"
 # abi3-py312: build against CPython's stable ABI so a single wheel per platform
 # works on 3.12, 3.13, 3.14+ — no per-minor-version rebuild, smaller wheel matrix.
 features = ["pyo3/extension-module", "pyo3/abi3-py312"]
+# ship the browser viewer inside the wheel so `flight view --serve` can serve it
+include = ["python/flight/_viewer.html"]

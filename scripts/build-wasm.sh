@@ -28,4 +28,9 @@ html = open(template).read().replace("__WASM_BASE64__", b64)
 open(out, "w").write(html)
 print(f"  wrote {out}  ({len(html)//1024} KiB, wasm {len(b64)*3//4//1024} KiB)")
 PY
+
+# Ship the same page inside the package, so `flight view --serve` can serve it
+# from an installed wheel (it injects the recording + a live /whatif and /fix).
+cp viewer-wasm/index.html python/flight/_viewer.html
+echo "  copied to python/flight/_viewer.html (for flight view --serve)"
 echo "done — open viewer-wasm/index.html in any browser and drop a .flight."

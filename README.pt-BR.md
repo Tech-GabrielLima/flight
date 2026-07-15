@@ -78,6 +78,12 @@ O reader em Rust é compilado para **WebAssembly** dentro de uma única página 
 um `.flight` e o crash é interpretado **no seu navegador**, offline — nada é enviado. É o artefato
 compartilhável que sustenta o projeto inteiro: *"abra isto e você vai ver tudo."*
 
+E não é só um leitor: ele diagnostica o crash (um *como resolver* heurístico), roda o **`why`** (fatia
+reversa de verdade) e um explorador de objetos **no cliente**, e compara duas execuções. Sirva com
+`flight view --serve crash.flight` e a *mesma* página ganha um console de **what-if** ao vivo e um **`fix`**
+que se autoverifica, apoiados no replay determinístico real — uma UI só, offline para ler, com motor para
+re-executar.
+
 <div align="center">
 <img alt="o viewer WASM no navegador: um .flight real interpretado offline — o crash, um 'como resolver' heurístico e a linha de código destacada"
      width="820"

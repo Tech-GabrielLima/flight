@@ -66,7 +66,9 @@ def test_http_whatif_roundtrip(tmp_path):
         url = f"http://127.0.0.1:{port}"
         with urllib.request.urlopen(url + "/") as r:
             page = r.read().decode()
-        assert "flight what-if" in page and "items" in page
+        # the rich browser viewer, with the recording embedded and the engine live
+        assert "window.__FLIGHT__" in page and "engine:true" in page.replace(" ", "")
+        assert "black box viewer" in page.lower()
         body = json.dumps({"var": "items", "value": [7, 8], "line": _crash_line(p)}).encode()
         req = urllib.request.Request(
             url + "/whatif", data=body, headers={"Content-Type": "application/json"}, method="POST"
@@ -76,6 +78,13 @@ def test_http_whatif_roundtrip(tmp_path):
         assert d["ok"] and d["changed"]
         assert "IndexError" in d["baseline"]
         assert "7" in d["counterfactual"]
+        # /fix proposes and verifies a patch over the recorded tape
+        req = urllib.request.Request(
+            url + "/fix", data=b"{}", headers={"Content-Type": "application/json"}, method="POST"
+        )
+        with urllib.request.urlopen(req) as r:
+            fx = json.loads(r.read())
+        assert fx["ok"] and isinstance(fx["status"], str) and "report" in fx
     finally:
         server.shutdown()
         server.server_close()

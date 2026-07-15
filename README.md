@@ -135,6 +135,11 @@ The Rust reader compiles to **WebAssembly** inside one self-contained HTML page.
 and the crash is parsed **in your browser**, offline — nothing is uploaded. This is the shareable artifact
 the whole project is built around: *"open this and you'll see everything."*
 
+It isn't only a reader: it diagnoses the crash (a heuristic *how to fix*), runs **`why`** (a real backward
+slice) and an object explorer **client-side**, and compares two runs. Serve it with `flight view --serve
+crash.flight` and the *same* page gets a live **what-if** console and a self-verifying **`fix`**, backed by
+the real deterministic replay — one UI, offline for reading, engine-backed for re-execution.
+
 <div align="center">
 <img alt="the browser WASM viewer: a real .flight parsed offline — the crash, a heuristic how-to-fix, and the highlighted source line"
      width="820"
