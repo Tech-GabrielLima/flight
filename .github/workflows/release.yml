@@ -7,8 +7,8 @@ name: Release wheels
 # pyproject.toml), so a single wheel per platform/arch covers Python 3.12, 3.13
 # and every later 3.x — no per-minor-version matrix.
 #
-# Publishing uses PyPI Trusted Publishing (OIDC): no API token is stored. One
-# one-time setup on PyPI is required — see README "Publishing a release".
+# Publishing uses a PyPI API token stored as the PYPI_API_TOKEN secret. Wheels
+# only: this project's sdist filenames are burned on PyPI and would fail the run.
 
 on:
   push:

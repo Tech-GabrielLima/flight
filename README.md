@@ -82,6 +82,67 @@ locals, the exception chain and the source are all in the file, and it never had
 
 ---
 
+## How it works
+
+One path in, one file out, many ways to read it.
+
+```text
+   your program
+        │   sys.monitoring (PEP 669) — native Rust callbacks, no Python frame, no FFI hop
+        ▼
+┌──────────────────────── in-process · hot path · Rust ────────────────────────┐
+│  "is this code mine?"          lock-free per-thread          global logical    │
+│   thread-local cache   ──▶      ring buffer (24-byte    ──▶     clock (merges   │
+│   (no lock, ~25 ns)             push, no mutex)                 threads in time)│
+└───────────────────────────────────────┬──────────────────────────────────────┘
+                                         │  uncaught exception  ·  or capture()
+                                         ▼
+        object graph (identity-preserving, aliasing ↔)  +  every frame's locals
+              +  the exception chain  +  the source of each file involved
+                                         │
+                                         ▼
+                              ┌───────────────────────┐
+                              │      crash.flight      │   msgpack + zstd · versioned
+                              │  a self-describing box │   truncation-tolerant · shareable
+                              └───────────┬───────────┘
+             ┌───────────────────────────┼───────────────────────────────┐
+             ▼                            ▼                               ▼
+      flight inspect              browser viewer (WASM)            why · diff · fix
+      CLI · Textual TUI           open offline, nothing            bisect · generalize
+                                  uploaded, no install             what-if · serve
+```
+
+Three stages, and the middle one is the whole point:
+
+1. **Record cheap enough to leave on.** CPython's `sys.monitoring` calls straight into **native Rust**
+   callbacks — no Python callback frame, no second FFI hop. The hot path takes no lock: a thread-local
+   cache answers "is this my code?", and interesting events are pushed onto a **lock-free per-thread ring
+   buffer**. A callback can return `DISABLE` so a cold location is never called again. That's the ~65 ns
+   that lets it stay on (see [Overhead](#overhead--the-honest-picture)).
+2. **On a crash, write a black box — not a trace.** The `excepthook` (or an explicit `capture()`) walks
+   the live stack once and serializes the **object graph** identity-first, so the *same* object in two
+   frames is recorded as one and marked `↔`; it captures every frame's locals, the exception chain, and
+   the **source** of each file — so the values still make sense on another machine. Everything is bounded
+   (depth, bytes, time) so a giant or hostile object can never hang or blow up the capture, and it can
+   never crash the program it's recording.
+3. **Read it anywhere.** The `.flight` is the spine: the CLI, the TUI, the offline **WASM viewer**, and
+   every analysis (`why`, `diff`, `fix`, `bisect`, `what-if`, fleet mode) only ever speak to the file —
+   never to a live process.
+
+### Open it in a browser — nothing installed
+
+The Rust reader compiles to **WebAssembly** inside one self-contained HTML page. Drop a `.flight` on it
+and the crash is parsed **in your browser**, offline — nothing is uploaded. This is the shareable artifact
+the whole project is built around: *"open this and you'll see everything."*
+
+<div align="center">
+<img alt="the browser WASM viewer: a .flight parsed offline, showing the exception, frames and object graph"
+     width="820"
+     src="https://raw.githubusercontent.com/Tech-GabrielLima/flight/main/assets/viewer.png">
+</div>
+
+---
+
 ## Why
 
 The real debugging loop is: add prints → try to reproduce → fail to reproduce → add more prints → wait
@@ -740,13 +801,11 @@ Use `--release` for the real numbers.)
 ### Publishing a release (maintainers)
 
 CI ([`.github/workflows/release.yml`](.github/workflows/release.yml)) builds wheels for all
-platforms + an sdist and publishes to PyPI on a version tag, via **PyPI Trusted
-Publishing** (OIDC — no API token is stored in the repo). One-time setup on
-PyPI: add a *pending publisher* for project `pyflight`, pointing at this
-repository, workflow `release.yml`, environment `pypi`. Then:
+platforms and publishes them to PyPI on a version tag, authenticating with a PyPI
+API token stored as the `PYPI_API_TOKEN` repository secret. Then:
 
 ```console
-git tag v0.0.3 && git push origin v0.0.3     # → CI builds every wheel and uploads to PyPI
+git tag v0.0.4 && git push origin v0.0.4     # → CI builds every wheel and uploads to PyPI
 ```
 
 `workflow_dispatch` runs the same build as a dry run (wheels as artifacts, no publish).

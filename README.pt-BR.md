@@ -32,6 +32,58 @@ last events (most recent first):
     ...
 ```
 
+## Como funciona
+
+Um caminho de entrada, um arquivo de saída, várias formas de ler.
+
+```text
+   seu programa
+        │   sys.monitoring (PEP 669) — callbacks nativos em Rust, sem frame Python, sem salto de FFI
+        ▼
+┌──────────────────────── no processo · caminho quente · Rust ─────────────────┐
+│  "esse código é meu?"          ring buffer lock-free             relógio       │
+│   cache thread-local   ──▶      por thread (push de       ──▶     lógico global │
+│   (sem lock, ~25 ns)            24 bytes, sem mutex)              (junta threads)│
+└───────────────────────────────────────┬──────────────────────────────────────┘
+                                         │  exceção não tratada  ·  ou capture()
+                                         ▼
+     grafo de objetos (preserva identidade, aliasing ↔)  +  locals de cada frame
+           +  a cadeia da exceção  +  o código-fonte de cada arquivo envolvido
+                                         │
+                                         ▼
+                              ┌───────────────────────┐
+                              │      crash.flight      │   msgpack + zstd · versionado
+                              │   uma caixa-preta que  │   tolerante a truncamento
+                              │      se descreve       │   compartilhável
+                              └───────────┬───────────┘
+             ┌───────────────────────────┼───────────────────────────────┐
+             ▼                            ▼                               ▼
+      flight inspect              viewer no navegador (WASM)       why · diff · fix
+      CLI · TUI Textual           abre offline, nada é             bisect · generalize
+                                  enviado, sem instalar            what-if · serve
+```
+
+**Grave barato o bastante pra deixar ligado.** O `sys.monitoring` chama direto em **Rust nativo** — sem
+frame de callback Python, sem segundo salto de FFI. O caminho quente não pega lock: um cache thread-local
+responde "esse código é meu?", e os eventos vão para um **ring buffer lock-free por thread**. **No crash,
+escreva uma caixa-preta — não um trace:** o `excepthook` serializa o **grafo de objetos** por identidade
+(o *mesmo* objeto em dois frames vira um só, marcado `↔`), os locals de cada frame, a cadeia da exceção e o
+**código-fonte** — tudo com orçamento de profundidade/bytes/tempo, e sem nunca poder derrubar o programa
+gravado. **Leia em qualquer lugar:** o `.flight` é a espinha — CLI, TUI, o **viewer WASM** offline e toda
+análise falam só com o arquivo, nunca com um processo vivo.
+
+### Abra no navegador — sem instalar nada
+
+O reader em Rust é compilado para **WebAssembly** dentro de uma única página HTML autossuficiente. Arraste
+um `.flight` e o crash é interpretado **no seu navegador**, offline — nada é enviado. É o artefato
+compartilhável que sustenta o projeto inteiro: *"abra isto e você vai ver tudo."*
+
+<div align="center">
+<img alt="o viewer WASM no navegador: um .flight interpretado offline, mostrando a exceção, os frames e o grafo de objetos"
+     width="820"
+     src="https://raw.githubusercontent.com/Tech-GabrielLima/flight/main/assets/viewer.png">
+</div>
+
 ## Por quê
 
 Um traceback diz **onde** um programa morreu, quase nunca **por quê**. O flight grava o que realmente
