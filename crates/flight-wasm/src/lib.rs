@@ -130,6 +130,7 @@ fn summary(f: &FlightFile) -> Value {
                     };
                     json!({
                         "name": name, "value": val, "type": ty,
+                        "id": id.to_string(),
                         "aliased": alias_ct.get(id).copied().unwrap_or(0) > 1,
                     })
                 })
@@ -157,6 +158,27 @@ fn summary(f: &FlightFile) -> Value {
         })
         .collect();
 
+    // the object graph, keyed by id (as a string — ids can exceed JS's safe integer range)
+    let objects: serde_json::Map<String, Value> = f
+        .objects()
+        .into_iter()
+        .map(|n| {
+            (
+                n.id.to_string(),
+                json!({
+                    "kind": n.kind,
+                    "type": n.type_name,
+                    "repr": n.repr,
+                    "length": n.length,
+                    "truncated": n.truncated,
+                    "items": n.items.iter().map(|it| json!({
+                        "key": it.key, "id": it.value_id.to_string(),
+                    })).collect::<Vec<_>>(),
+                }),
+            )
+        })
+        .collect();
+
     json!({
         "format_version": f.format_version,
         "flight_version": f.header.flight_version,
@@ -171,5 +193,6 @@ fn summary(f: &FlightFile) -> Value {
         "recent_events": recent,
         "exceptions": exceptions,
         "frames": frames,
+        "objects": Value::Object(objects),
     })
 }

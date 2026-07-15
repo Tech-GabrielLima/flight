@@ -342,6 +342,43 @@
   details.detcard > summary::after { content:' ▸'; color:var(--faint); }
   details.detcard[open] > summary::after { content:' ▾'; }
 
+  /* why? (backward slice) + object explorer */
+  .whycol { text-align:right; white-space:nowrap; }
+  .why-btn { font-family:var(--sans); font-size:11.5px; padding:2px 10px; border-radius:7px;
+    background:rgba(88,166,255,.08); border:1px solid rgba(88,166,255,.25); color:#bcd9ff; cursor:pointer; }
+  .why-btn:hover { background:rgba(88,166,255,.18); }
+  .whypanel { margin-top:12px; border:1px solid rgba(103,232,249,.22); border-radius:11px;
+    padding:14px 16px; background:rgba(10,22,28,.4); font-family:var(--mono); font-size:13px;
+    animation:rise .3s ease both; }
+  .wh-title { font-size:14px; margin-bottom:6px; } .wh-title .nm { color:var(--accent); }
+  .wh-sec { font-family:var(--sans); color:var(--dim); font-size:11px; text-transform:uppercase;
+    letter-spacing:.06em; margin:12px 0 4px; }
+  .wh-list { list-style:none; padding:0; margin:0; } .wh-list li { padding:2px 0; }
+  .wh-list .nm { color:var(--accent); } .wh-list .k { color:#c58bff; } .wh-list .s { color:#a5d6a7; }
+  .wh-root { margin-top:10px; color:var(--cyan); } .wh-root .nm { color:var(--accent); }
+  .wh-foot { font-family:var(--sans); color:var(--faint); font-size:12px; margin-top:12px; }
+  .wh-foot code { background:rgba(140,170,210,.1); padding:1px 6px; border-radius:5px; color:#9fc6ff; }
+
+  /* what-if console */
+  .whatif { border-color:rgba(103,232,249,.2); }
+  .whatif .wf-lead { font-family:var(--sans); color:var(--dim); font-size:14px; margin:0 0 14px; line-height:1.55; }
+  .wf-form { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+  .wf-form label { font-family:var(--sans); font-size:11px; color:var(--faint); text-transform:uppercase;
+    letter-spacing:.05em; display:flex; flex-direction:column; gap:5px; }
+  .wf-form select, .wf-form input { font-family:var(--mono); font-size:13px; padding:8px 10px;
+    border-radius:8px; border:1px solid var(--line); background:rgba(10,14,22,.7); color:var(--ink); }
+  .wf-form input { min-width:190px; }
+  #wf-go { margin-left:auto; background:linear-gradient(100deg,var(--accent),var(--cyan)); color:#04121f;
+    border:none; font-weight:600; }
+  .wf-res { margin-top:16px; padding:14px 16px; border:1px solid rgba(140,170,210,.12); border-radius:10px;
+    font-family:var(--mono); font-size:13px; line-height:1.6; }
+  .wf-line { padding:2px 0; }
+  .wf-b { color:var(--ok); font-weight:700; display:inline-block; width:64px; }
+  .wf-a { color:var(--warn); font-weight:700; display:inline-block; width:64px; }
+  .wf-verdict { margin-top:8px; color:var(--ink); }
+  .wf-off { font-family:var(--sans); font-size:13.5px; color:#cdd9e8; line-height:1.55; margin-bottom:10px; }
+  .wf-off b { color:var(--ink); }
+
   footer { color:var(--faint); text-align:center; padding:30px 20px 40px; font-size:12px;
     border-top:1px solid rgba(140,170,210,.08); margin-top:24px; }
   footer code { color:var(--dim); }
@@ -1025,12 +1062,75 @@ function srcHtml(f) {
 function localsHtml(f) {
   const ls = f.locals || [];
   if (!ls.length) return `<div class="muted" style="margin-top:12px">no locals captured</div>`;
-  return `<table class="localtab">` + ls.map(l => {
+  const rows = ls.map(l => {
     const s = suspicion(l.value);
     return `<tr class="${s?'suspect':''}"><td class="nm">${esc(l.name)}</td>` +
       `<td>${esc(l.value)}${l.aliased?' <span class="alias" title="the same object appears in another frame">↔</span>':''}</td>` +
-      `<td class="ty">${esc(l.type)}</td><td class="why">${s?esc(s):''}</td></tr>`;
-  }).join('') + `</table>`;
+      `<td class="ty">${esc(l.type)}</td><td class="why">${s?esc(s):''}</td>` +
+      `<td class="whycol"><button class="why-btn" data-id="${esc(l.id)}">why?</button></td></tr>`;
+  }).join('');
+  return `<table class="localtab">${rows}</table><div class="whyout"></div>`;
+}
+
+// -- why (backward slice) & object graph, computed client-side -------------
+let CUR = null;  // the parsed summary of the file on screen
+const nodeVal = (objs, id) => {
+  const n = objs[id];
+  if (!n) return '<?>';
+  if (n.repr) return n.repr;
+  return n.kind + (n.length != null ? `[${n.length}]` : '');
+};
+function idxAlias(s) {         // object id -> [{fi, name, qual}] (every local that points at it)
+  const m = {};
+  (s.frames || []).forEach((f, fi) => (f.locals || []).forEach(l => {
+    (m[l.id] = m[l.id] || []).push({ fi, name: l.name, qual: f.qualname });
+  }));
+  return m;
+}
+function idxParent(s) {        // child id -> [{pid, key}] (containers that hold it)
+  const m = {}, objs = s.objects || {};
+  for (const pid in objs) (objs[pid].items || []).forEach(it => {
+    (m[it.id] = m[it.id] || []).push({ pid, key: it.key });
+  });
+  return m;
+}
+// The exact backward slice: aliasing (same object, another name/frame) +
+// containment (this value IS x[key] in another frame), receding to a root.
+function renderWhy(s, id) {
+  const alias = idxAlias(s), parent = idxParent(s), objs = s.objects || {};
+  const refs = alias[id] || [];
+  const origin = refs[0];
+  let h = `<div class="whypanel"><div class="wh-title">why is <span class="nm">${origin?esc(origin.name):'this value'}</span> = ${esc(nodeVal(objs, id))}?</div>`;
+  if (refs.length > 1) {
+    h += `<div class="wh-sec">the same object, under other names</div><ul class="wh-list">` +
+      refs.slice(1).map(r => `<li>↔ <span class="nm">${esc(r.name)}</span> in <span class="k">${esc(r.qual)}</span> <span class="muted">(frame #${r.fi})</span></li>`).join('') + `</ul>`;
+  }
+  const seen = new Set([id]); let cur = id; const chain = [];
+  while (true) {
+    const ps = parent[cur] || []; let picked = null;
+    for (const p of ps) { if ((alias[p.pid] || []).length && !seen.has(p.pid)) { picked = p; break; } }
+    if (!picked) break;
+    seen.add(picked.pid);
+    const pl = (alias[picked.pid] || [])[0];
+    chain.push({ name: pl.name, qual: pl.qual, fi: pl.fi, key: picked.key, val: nodeVal(objs, picked.pid) });
+    cur = picked.pid;
+  }
+  if (chain.length) {
+    h += `<div class="wh-sec">where it came from</div><ul class="wh-list">` + chain.map(c =>
+      `<li>↰ is <span class="nm">${esc(c.name)}</span>${c.key!=null?`[<span class="s">${esc(c.key)}</span>]`:''} in <span class="k">${esc(c.qual)}</span> <span class="muted">(#${c.fi}) — ${esc(c.val)}</span></li>`).join('') + `</ul>`;
+    const root = chain[chain.length - 1];
+    h += `<div class="wh-root">⇒ root: <span class="nm">${esc(root.name)}</span> = ${esc(root.val)} in <span class="k">${esc(root.qual)}</span></div>`;
+  } else if (refs.length <= 1) {
+    h += `<div class="wh-root">⇒ it's a parameter or a root value — no earlier origin recorded.</div>`;
+  }
+  const node = objs[id];
+  if (node && node.items && node.items.length) {
+    h += `<div class="wh-sec">contents (${node.items.length}${node.truncated?'+':''})</div><ul class="wh-list">` +
+      node.items.slice(0, 12).map(it => `<li>${it.key!=null?`<span class="s">${esc(it.key)}</span>: `:''}${esc(nodeVal(objs, it.id))}</li>`).join('') +
+      (node.items.length > 12 ? `<li class="muted">…</li>` : '') + `</ul>`;
+  }
+  h += `<div class="wh-foot">terminal: <code>flight why --var ${origin?esc(origin.name):'&lt;name&gt;'}</code></div></div>`;
+  return h;
 }
 function frameBlock(f, i, isCrash) {
   return `<details class="frame" data-i="${i}"${isCrash?' open':''}>
@@ -1045,6 +1145,7 @@ function frameBlock(f, i, isCrash) {
 function render(s, name) {
   const out = document.getElementById('out');
   if (s.error) { out.innerHTML = `<div class="card err">Could not parse: ${esc(s.error)}</div>`; return; }
+  CUR = s;
   const frames = s.frames || [];
   const exc = (s.exceptions || [])[0];
   let ci = frames.findIndex(f => isUser(f.file));
@@ -1091,6 +1192,22 @@ function render(s, name) {
     html += `<div class="verify"><b>Prove it — don't guess.</b> <code>flight why --var ${primary}</code>
       traces exactly where the value came from; <code>flight fix crash.flight</code> proposes a patch and
       <em>re-runs the recorded tape</em> to confirm the crash is gone with no behaviour change.</div></div>`;
+  }
+
+  // 2b — what-if: change a value and re-run (real under `flight view --serve`)
+  if (exc && crash) {
+    const opts = (crash.locals || []).filter(l => !(l.name.startsWith('__') && l.name.endsWith('__')))
+      .map(l => `<option value="${esc(l.name)}">${esc(l.name)} = ${esc(l.value)}</option>`).join('');
+    html += `<div class="card whatif"><h2>What-if — change a value and re-run</h2>
+      <p class="wf-lead">Overwrite a local at the crash line and re-execute over the recorded world
+        (time, randomness and I/O held constant) to see the counterfactual outcome.</p>
+      <div class="wf-form">
+        <label>variable<select id="wf-var">${opts||'<option>—</option>'}</select></label>
+        <label>new value<input id="wf-val" placeholder='[1, 2, 3]   (JSON)'></label>
+        <label>at line<input id="wf-line" type="number" value="${crash.lineno}"></label>
+        <button id="wf-go">run what-if →</button>
+      </div>
+      <div id="wf-res" class="wf-res muted">baseline vs counterfactual will appear here.</div></div>`;
   }
 
   // 3 — where it happened: the crash frame's source + locals
@@ -1141,12 +1258,59 @@ function render(s, name) {
     }
   }));
 
-  // copy the candidate fix
-  out.querySelectorAll('.copy').forEach(b => b.addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'copied ✓'; b.classList.add('done'); }
-    catch { b.textContent = 'select & copy'; }
-    setTimeout(() => { b.textContent = 'copy'; b.classList.remove('done'); }, 1600);
+  // copy buttons
+  wireCopy(out);
+
+  // why? — render the backward slice for a local into the nearest panel
+  out.querySelectorAll('.why-btn').forEach(b => b.addEventListener('click', () => {
+    const box = b.closest('table').parentElement.querySelector('.whyout');
+    if (!box) return;
+    if (box.dataset.id === b.dataset.id) { box.innerHTML = ''; box.dataset.id = ''; return; }
+    box.innerHTML = renderWhy(CUR, b.dataset.id);
+    box.dataset.id = b.dataset.id;
+    box.scrollIntoView({ block: 'nearest' });
   }));
+
+  // what-if — real when an engine answers /whatif, honest command otherwise
+  const go = document.getElementById('wf-go');
+  if (go) go.addEventListener('click', async () => {
+    const res = document.getElementById('wf-res');
+    res.classList.remove('muted');
+    res.textContent = 'running…';
+    const raw = document.getElementById('wf-val').value;
+    let value; try { value = JSON.parse(raw); } catch { value = raw; }
+    const body = { var: document.getElementById('wf-var').value, value,
+                   line: parseInt(document.getElementById('wf-line').value, 10) };
+    try {
+      const r = await fetch('/whatif', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!r.ok) throw new Error('no engine');
+      const d = await r.json();
+      if (!d.ok) { res.innerHTML = `<span class="bad">error:</span> ${esc(d.error || '?')}`; return; }
+      res.innerHTML = `<div class="wf-line"><span class="wf-b">before</span> ${esc(d.baseline)}</div>` +
+        `<div class="wf-line"><span class="wf-a">after</span> ${esc(d.counterfactual)}</div>` +
+        `<div class="wf-verdict">${d.applied ? (d.changed ? '→ the change alters the outcome.' : '→ same outcome.') : '⚠ the override point was never reached.'}</div>` +
+        (d.pep667 ? '' : `<div class="muted">(live-local override needs Python 3.13+)</div>`);
+    } catch (e) {
+      res.innerHTML = `<div class="wf-off"><b>What-if re-executes your code, so it needs the local engine</b> —
+        it can't run from a static file. Start it once and this console goes live against the real replay:</div>
+        <div class="fixbox"><div class="fixhead"><span>terminal</span><button class="copy" data-copy="flight view --serve ${esc(name)}">copy</button></div>
+        <pre><code>flight view --serve ${esc(name)}</code></pre></div>
+        <div class="muted">The engine holds the recorded world (time / random / I/O) constant and replays your
+        function with the value changed — the true counterfactual (Phase 14).</div>`;
+      wireCopy(res);
+    }
+  });
+}
+
+function wireCopy(root) {
+  root.querySelectorAll('.copy').forEach(b => {
+    if (b.dataset.wired) return; b.dataset.wired = '1';
+    b.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'copied ✓'; b.classList.add('done'); }
+      catch { b.textContent = 'select & copy'; }
+      setTimeout(() => { b.textContent = 'copy'; b.classList.remove('done'); }, 1600);
+    });
+  });
 }
 
 // -- two-file compare (event-ring axis, first divergence highlighted) -------
