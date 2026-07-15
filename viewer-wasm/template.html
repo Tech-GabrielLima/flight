@@ -5,76 +5,256 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Flight — black box viewer</title>
 <style>
-  :root { color-scheme: dark; --bg:#0e1116; --panel:#161b22; --line:#232a34;
-          --ink:#e6edf3; --dim:#8b949e; --accent:#58a6ff; --bad:#ff7b72; --ok:#3fb950;
-          --warn:#d29922; }
+  :root {
+    color-scheme: dark;
+    --bg:#080b10; --bg2:#0c1119; --panel:#121826; --panel-2:#0e1420;
+    --line:#212a38; --ink:#e9eff6; --dim:#8a95a5; --faint:#5b6675;
+    --accent:#58a6ff; --cyan:#67e8f9; --bad:#ff7b72; --ok:#4ade80; --warn:#f5c451;
+    --glow: 0 0 0 1px rgba(88,166,255,.35), 0 24px 70px -28px rgba(88,166,255,.55);
+    --mono: ui-monospace,"SF Mono",SFMono-Regular,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans: ui-sans-serif,system-ui,-apple-system,"Segoe UI",Inter,Roboto,sans-serif;
+  }
   * { box-sizing: border-box; }
-  body { margin:0; font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-         background:var(--bg); color:var(--ink); }
-  header { padding:20px 24px; border-bottom:1px solid var(--line); }
-  h1 { margin:0; font-size:18px; font-weight:600; }
-  h1 .plane { color:var(--accent); }
-  .sub { color:var(--dim); margin-top:4px; }
-  main { max-width:1100px; margin:0 auto; padding:24px; }
-  #drop { border:2px dashed var(--line); border-radius:12px; padding:48px 24px;
-          text-align:center; color:var(--dim); cursor:pointer; transition:.15s; }
-  #drop.hot { border-color:var(--accent); color:var(--ink); background:#111722; }
+  html,body { height:100%; }
+  body {
+    margin:0; font:14px/1.55 var(--mono); color:var(--ink);
+    background:var(--bg); overflow-x:hidden; -webkit-font-smoothing:antialiased;
+  }
+  /* ambient background: instrument glow + faint grid + a drifting aurora */
+  .bg { position:fixed; inset:0; z-index:-3; pointer-events:none;
+    background:
+      radial-gradient(1200px 620px at 12% -12%, rgba(88,166,255,.13), transparent 60%),
+      radial-gradient(1000px 560px at 108% -6%, rgba(103,232,249,.09), transparent 58%),
+      linear-gradient(180deg,#080b10,#070a0f 60%,#05070b); }
+  .bg-grid { position:fixed; inset:0; z-index:-2; pointer-events:none; opacity:.55;
+    background-image:
+      linear-gradient(rgba(120,150,190,.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(120,150,190,.06) 1px, transparent 1px);
+    background-size:46px 46px;
+    -webkit-mask:radial-gradient(ellipse 90% 60% at 50% -5%, #000 20%, transparent 78%);
+            mask:radial-gradient(ellipse 90% 60% at 50% -5%, #000 20%, transparent 78%); }
+  .aurora { position:fixed; z-index:-2; width:60vw; height:60vw; left:8vw; top:-24vw;
+    background:radial-gradient(circle at 50% 50%, rgba(88,166,255,.20), transparent 62%);
+    filter:blur(46px); pointer-events:none; animation:drift 22s ease-in-out infinite; }
+
+  main { max-width:1080px; margin:0 auto; padding:26px 24px 12px; }
+
+  /* ---- hero ---- */
+  .hero { text-align:center; padding:46px 0 30px; transition:padding .5s ease; }
+  .emblem { width:112px; height:112px; margin:0 auto 22px;
+    transition:width .5s ease, height .5s ease, margin .5s ease;
+    filter:drop-shadow(0 10px 30px rgba(88,166,255,.35)); }
+  .word { font-family:var(--sans); font-weight:800; letter-spacing:-.03em;
+    font-size:clamp(42px,7vw,68px); line-height:1; margin:0;
+    background:linear-gradient(100deg,#ffffff 0%,#cfe4ff 30%,var(--accent) 62%,var(--cyan) 100%);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    transition:font-size .5s ease; }
+  .word b { font-weight:800; }
+  .tag { font-family:var(--sans); color:var(--dim); font-size:clamp(15px,1.9vw,18px);
+    max-width:620px; margin:16px auto 0; line-height:1.5;
+    transition:opacity .4s ease, max-height .5s ease, margin .5s ease; }
+  .tag b { color:var(--ink); font-weight:600; }
+  .kicker { font-family:var(--sans); display:inline-flex; gap:14px; align-items:center;
+    margin-top:20px; color:var(--faint); font-size:12.5px; letter-spacing:.02em;
+    transition:opacity .4s ease, max-height .5s ease, margin .5s ease; }
+  .kicker .dot { width:5px; height:5px; border-radius:50%; background:var(--faint); }
+  .kicker .live { color:var(--ok); }
+  .kicker .live::before { content:''; display:inline-block; width:7px; height:7px; border-radius:50%;
+    background:var(--ok); margin-right:7px; box-shadow:0 0 0 0 rgba(74,222,128,.6);
+    animation:beacon 2s infinite; vertical-align:middle; }
+
+  body.loaded .hero { padding:14px 0 6px; }
+  body.loaded .emblem { width:52px; height:52px; margin-bottom:8px; }
+  body.loaded .word { font-size:30px; }
+  body.loaded .tag, body.loaded .kicker { opacity:0; max-height:0; margin:0; overflow:hidden; }
+
+  /* ---- drop zone ---- */
+  #drop { position:relative; display:block; border-radius:18px; padding:52px 28px;
+    text-align:center; cursor:pointer; overflow:hidden; isolation:isolate;
+    transition:transform .25s ease, box-shadow .35s ease; }
+  #drop::before { content:''; position:absolute; inset:0; z-index:0; opacity:.4;
+    background:conic-gradient(from 0deg, transparent 0 58%, rgba(88,166,255,.95) 76%,
+      rgba(103,232,249,.95) 88%, transparent 100%);
+    transition:opacity .3s ease; animation:spin 7s linear infinite; }
+  #drop::after { content:''; position:absolute; inset:1.6px; z-index:1; border-radius:16px;
+    background:linear-gradient(180deg,rgba(18,24,38,.92),rgba(11,16,26,.94));
+    backdrop-filter:blur(6px); transition:background .3s ease; }
+  #drop .inner { position:relative; z-index:2; }
+  #drop:hover { transform:translateY(-2px); }
+  #drop:hover::before { opacity:.7; }
+  #drop.hot { transform:translateY(-3px) scale(1.006); box-shadow:var(--glow); }
+  #drop.hot::before { opacity:1; animation-duration:2.4s; }
+  #drop.hot::after { background:linear-gradient(180deg,rgba(21,30,48,.95),rgba(14,21,34,.96)); }
   #drop input { display:none; }
-  .bar { display:flex; gap:8px; align-items:center; margin-top:12px; flex-wrap:wrap; }
-  button { background:var(--panel); color:var(--ink); border:1px solid var(--line);
-           border-radius:6px; padding:5px 12px; cursor:pointer; font:inherit; }
-  button:hover { border-color:var(--accent); }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px;
-          padding:16px 18px; margin-top:16px; }
-  .card h2 { margin:0 0 10px; font-size:13px; letter-spacing:.04em; text-transform:uppercase;
-             color:var(--dim); font-weight:600; }
-  .exc { font-size:16px; }
-  .exc .type { color:var(--bad); font-weight:700; }
-  .chips span { display:inline-block; background:#0d1117; border:1px solid var(--line);
-                border-radius:6px; padding:2px 8px; margin:2px 4px 2px 0; color:var(--dim); }
+  .drop-ico { width:46px; height:46px; margin:0 auto 14px; color:var(--accent);
+    opacity:.95; transition:transform .3s ease; }
+  #drop:hover .drop-ico { transform:translateY(-3px); }
+  #dropmsg { font-family:var(--sans); color:var(--ink); font-size:16px; }
+  #dropmsg b { color:var(--accent); font-weight:600; }
+  .drop-sub { font-family:var(--sans); color:var(--faint); font-size:12.5px; margin-top:8px; }
+
+  /* ---- action bar ---- */
+  .bar { display:flex; gap:10px; align-items:center; margin-top:16px; flex-wrap:wrap; }
+  button { display:inline-flex; align-items:center; gap:7px; font:inherit;
+    background:linear-gradient(180deg,rgba(26,34,50,.9),rgba(18,24,38,.9));
+    color:var(--ink); border:1px solid var(--line); border-radius:9px;
+    padding:7px 13px; cursor:pointer; transition:.2s; }
+  button:hover { border-color:var(--accent); box-shadow:0 0 0 3px rgba(88,166,255,.14);
+    transform:translateY(-1px); }
+  button svg { width:15px; height:15px; }
+  #hint { font-family:var(--sans); color:var(--dim); font-size:13px; }
+
+  /* ---- injected result cards ---- */
+  #out { padding-bottom:20px; }
+  .card { position:relative; background:linear-gradient(180deg,rgba(18,24,38,.62),rgba(12,18,28,.62));
+    backdrop-filter:blur(14px); border:1px solid rgba(140,170,210,.09); border-radius:16px;
+    padding:18px 20px; margin-top:16px; box-shadow:0 18px 44px -26px rgba(0,0,0,.85);
+    animation:rise .5s cubic-bezier(.2,.75,.2,1) both; }
+  #out > .card:nth-child(1){animation-delay:.02s} #out > .card:nth-child(2){animation-delay:.08s}
+  #out > .card:nth-child(3){animation-delay:.14s} #out > .card:nth-child(4){animation-delay:.20s}
+  #out > .card:nth-child(5){animation-delay:.26s} #out > .card:nth-child(6){animation-delay:.32s}
+  .card h2 { font-family:var(--sans); margin:0 0 12px; font-size:11.5px; letter-spacing:.11em;
+    text-transform:uppercase; color:var(--faint); font-weight:700; }
+  .exc { font-size:17px; line-height:1.4; }
+  .exc .type { color:var(--bad); font-weight:700;
+    text-shadow:0 0 24px rgba(255,123,114,.35); }
+  .card:has(.exc) { border-color:rgba(255,123,114,.22);
+    box-shadow:0 18px 44px -26px rgba(0,0,0,.85), inset 3px 0 0 -1px rgba(255,123,114,.6); }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chips span { display:inline-block; background:rgba(88,166,255,.07);
+    border:1px solid rgba(88,166,255,.18); border-radius:7px; padding:3px 9px;
+    color:#9fc6ff; font-size:12px; letter-spacing:.02em; transition:.2s; }
+  .chips span:hover { background:rgba(88,166,255,.16); color:var(--ink); }
   table { width:100%; border-collapse:collapse; }
-  td,th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
-  th { color:var(--dim); font-weight:600; }
+  td,th { text-align:left; padding:8px 8px; border-bottom:1px solid rgba(140,170,210,.08);
+    vertical-align:top; }
+  tr:last-child td { border-bottom:none; }
+  th { font-family:var(--sans); color:var(--faint); font-weight:600; font-size:11.5px;
+    letter-spacing:.06em; text-transform:uppercase; }
+  tbody tr, table tr { transition:background .15s; }
+  table tr:hover td { background:rgba(88,166,255,.05); }
   .where { color:var(--dim); }
-  .k { color:var(--accent); }
+  .k { color:var(--accent); font-weight:600; }
   .kv { color:var(--dim); } .kv b { color:var(--ink); font-weight:600; }
   .muted { color:var(--dim); }
   .err { color:var(--bad); }
-  ul.events { list-style:none; margin:0; padding:0; max-height:340px; overflow:auto; }
-  ul.events li { padding:3px 0; border-bottom:1px solid var(--line); }
-  ul.events .kind { display:inline-block; width:92px; color:var(--accent); }
+  ul.events { list-style:none; margin:0; padding:0; max-height:360px; overflow:auto; }
+  ul.events li { padding:5px 6px; border-bottom:1px solid rgba(140,170,210,.07);
+    border-radius:6px; transition:background .15s; }
+  ul.events li:hover { background:rgba(88,166,255,.05); }
+  ul.events .kind { display:inline-block; width:94px; color:var(--cyan); font-size:12px; }
   .cols { display:grid; grid-template-columns:2.2em 1fr 1fr; }
-  .cmp { max-height:520px; overflow:auto; border:1px solid var(--line); border-radius:8px; }
-  .cmp .row { display:grid; grid-template-columns:2.2em 1fr 1fr; border-bottom:1px solid var(--line); }
-  .cmp .row > div { padding:3px 8px; white-space:pre-wrap; word-break:break-word; }
-  .cmp .n { color:var(--dim); text-align:right; }
-  .cmp .differ > div { background:#d2992218; }
-  .cmp .diverge > div { background:#ff7b7233; font-weight:600; }
+  .cmp { max-height:520px; overflow:auto; border:1px solid var(--line); border-radius:10px; }
+  .cmp .row { display:grid; grid-template-columns:2.4em 1fr 1fr;
+    border-bottom:1px solid rgba(140,170,210,.07); }
+  .cmp .row > div { padding:4px 9px; white-space:pre-wrap; word-break:break-word; }
+  .cmp .row:first-child { position:sticky; top:0; background:var(--panel);
+    font-family:var(--sans); font-size:11.5px; letter-spacing:.05em; text-transform:uppercase;
+    color:var(--faint); }
+  .cmp .n { color:var(--faint); text-align:right; }
+  .cmp .differ > div { background:rgba(245,196,81,.11); }
+  .cmp .diverge > div { background:rgba(255,123,114,.22); font-weight:600; }
   .cmp .diverge { scroll-margin-top:60px; }
-  .headline { margin:0 0 12px; padding:8px 12px; border-radius:8px; background:#8881; }
-  .headline.bad { background:#ff7b7222; color:var(--bad); }
-  footer { color:var(--dim); text-align:center; padding:24px; font-size:12px; }
+  .headline { font-family:var(--sans); margin:0 0 12px; padding:10px 14px; border-radius:10px;
+    background:rgba(140,170,210,.08); }
+  .headline.bad { background:rgba(255,123,114,.14); color:var(--bad); }
+
+  footer { font-family:var(--sans); color:var(--faint); text-align:center;
+    padding:26px 20px 34px; font-size:12px; }
+  footer .mark { color:var(--dim); }
+  footer code { color:var(--dim); }
+  ::selection { background:rgba(88,166,255,.28); }
+  ::-webkit-scrollbar { width:11px; height:11px; }
+  ::-webkit-scrollbar-thumb { background:#233; border:3px solid transparent;
+    background-clip:content-box; border-radius:9px; }
+  ::-webkit-scrollbar-thumb:hover { background:#2f3f52; background-clip:content-box; }
+
+  @keyframes spin { to { transform:rotate(360deg); } }
+  @keyframes rise { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:none; } }
+  @keyframes drift { 0%,100% { transform:translate(0,0) scale(1); }
+    50% { transform:translate(10vw,4vw) scale(1.12); } }
+  @keyframes beacon { 0% { box-shadow:0 0 0 0 rgba(74,222,128,.5); }
+    70% { box-shadow:0 0 0 8px rgba(74,222,128,0); } 100% { box-shadow:0 0 0 0 rgba(74,222,128,0); } }
+  @keyframes floaty { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-2px); } }
+  @keyframes recblink { 0%,100% { opacity:1; } 50% { opacity:.25; } }
+  @media (prefers-reduced-motion: reduce) {
+    .aurora,#drop::before,.emblem .radar,.card,.kicker .live::before { animation:none !important; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1><span class="plane">✈</span> Flight — black box viewer</h1>
-  <div class="sub">Drop a <code>.flight</code> file (or two, to <b>compare</b>). It's parsed
-    <b>in your browser</b> by the Rust reader compiled to WebAssembly — nothing is uploaded,
-    nothing installed.</div>
-</header>
+<div class="bg"></div><div class="bg-grid"></div><div class="aurora"></div>
+
 <main>
+  <section class="hero">
+    <svg class="emblem" viewBox="0 0 96 96" fill="none" aria-label="flight">
+      <defs>
+        <radialGradient id="core" cx="50%" cy="42%" r="60%">
+          <stop offset="0%" stop-color="#eaf3ff"/><stop offset="55%" stop-color="#7db4ff"/>
+          <stop offset="100%" stop-color="#3b82f6"/>
+        </radialGradient>
+        <linearGradient id="arm" x1="48" y1="48" x2="48" y2="10" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#58a6ff" stop-opacity="0"/>
+          <stop offset="100%" stop-color="#8bd6ff"/>
+        </linearGradient>
+        <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="1.1"/>
+        </filter>
+      </defs>
+      <circle cx="48" cy="48" r="43" fill="rgba(88,166,255,.05)" stroke="rgba(88,166,255,.25)" stroke-width="1.5"/>
+      <circle cx="48" cy="48" r="35" fill="none" stroke="rgba(120,170,230,.35)" stroke-width="1.4" stroke-dasharray="1 6"/>
+      <g>
+        <animateTransform attributeName="transform" type="rotate" from="0 48 48" to="360 48 48" dur="4.5s" repeatCount="indefinite"/>
+        <path d="M48 48 L48 8 A40 40 0 0 0 20 20 Z" fill="rgba(88,166,255,.13)"/>
+        <line x1="48" y1="48" x2="48" y2="8" stroke="url(#arm)" stroke-width="2.2" stroke-linecap="round"/>
+        <circle cx="48" cy="10" r="2.4" fill="#bfe6ff"/>
+      </g>
+      <g filter="url(#soft)">
+        <path d="M48 26 L64 68 L48 59 L32 68 Z" fill="url(#core)"/>
+      </g>
+      <path d="M48 26 L64 68 L48 59 L32 68 Z" fill="url(#core)"/>
+      <circle cx="76" cy="20" r="4" fill="#ff5f57" style="animation:recblink 1.6s ease-in-out infinite"/>
+    </svg>
+    <h1 class="word">flight</h1>
+    <p class="tag">The <b>black box</b> for Python. When a program dies, open the whole flight —
+      every frame, local, and object it held in its last moments — parsed <b>right here in your browser</b>.</p>
+    <div class="kicker">
+      <span class="live">reads locally</span><span class="dot"></span>
+      <span>Rust&nbsp;→&nbsp;WebAssembly</span><span class="dot"></span>
+      <span>nothing uploaded</span><span class="dot"></span>
+      <span>nothing installed</span>
+    </div>
+  </section>
+
   <label id="drop">
-    <div id="dropmsg">Drop one <b>.flight</b> to inspect, or two to diff. Click to choose.</div>
+    <div class="inner">
+      <svg class="drop-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+      </svg>
+      <div id="dropmsg">Drop a <b>.flight</b> here — or two, to <b>compare</b>. Click to choose.</div>
+      <div class="drop-sub">the file never leaves this machine</div>
+    </div>
     <input type="file" id="file" accept=".flight" multiple />
   </label>
+
   <div class="bar" id="bar" style="display:none">
-    <button id="copylink" title="A shareable link to this exact view (the file stays local).">🔗 copy link to this view</button>
-    <span class="muted" id="hint"></span>
+    <button id="copylink" title="A shareable link to this exact view (the file stays local).">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/>
+        <path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
+      copy link to this view
+    </button>
+    <span id="hint"></span>
   </div>
   <div id="out"></div>
 </main>
-<footer>Runs entirely offline · powered by <code>flight-reader</code> (Rust → WASM) · pure-Rust zstd</footer>
+
+<footer>
+  <span class="mark">✦</span> runs entirely offline · powered by <code>flight-reader</code>
+  (Rust → WASM) · pure-Rust zstd
+</footer>
 
 <script>
 const WASM_BASE64 = "__WASM_BASE64__";
@@ -262,6 +442,14 @@ document.getElementById('copylink').addEventListener('click', async () => {
   const { files } = readHash();
   if (files.length) document.getElementById('dropmsg').innerHTML =
     `This link expects <b>${files.map(esc).join('</b>, <b>')}</b> — drop ${files.length>1?'them':'it'} to restore the view.`;
+})();
+</script>
+<script>
+// Collapse the hero once a recording is on screen, so the data leads.
+(function(){
+  const out = document.getElementById('out');
+  new MutationObserver(() => document.body.classList.toggle('loaded', out.childElementCount > 0))
+    .observe(out, { childList: true });
 })();
 </script>
 </body>

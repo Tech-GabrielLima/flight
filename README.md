@@ -136,7 +136,7 @@ and the crash is parsed **in your browser**, offline — nothing is uploaded. Th
 the whole project is built around: *"open this and you'll see everything."*
 
 <div align="center">
-<img alt="the browser WASM viewer: a .flight parsed offline, showing the exception, frames and object graph"
+<img alt="the browser WASM viewer: a real .flight parsed offline, showing the exception and the crash-first frame stack"
      width="820"
      src="https://raw.githubusercontent.com/Tech-GabrielLima/flight/main/assets/viewer.png">
 </div>
