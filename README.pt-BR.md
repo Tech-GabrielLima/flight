@@ -292,11 +292,27 @@ Em produção (Fase 8): `flight.install(overhead_slo=0.03, daemon=True)` liga o 
 
 O flight grava só o *seu* código (stdlib e site-packages são excluídos por padrão) e, por padrão, na
 granularidade de **chamada/retorno/exceção** — barato, e suficiente para responder "que funções rodaram
-e como a exceção se propagou?". O detalhe por linha (`record_lines=True`) é opt-in. O custo por evento
-(~350–500 ns) é dominado pelo callback Python do `sys.monitoring` e pelo salto de FFI — *não* pelo ring
-em Rust. Atingir o alvo de <5% em código hot exige mover o callback para código nativo, uma otimização
-nomeada da Fase 1. Rode `python scripts/bench.py` para o baseline. Detalhes no [README](README.md#overhead--the-honest-picture)
-e em [TECHNICAL.md](TECHNICAL.md) §0.2.
+e como a exceção se propagou?". O detalhe por linha (`record_lines=True`) é opt-in. Os callbacks são
+**funções Rust nativas registradas direto no `sys.monitoring`** (sem frame de callback Python, sem salto
+de FFI) e o caminho quente não pega lock: um **ring buffer lock-free por thread** + um cache thread-local
+da decisão "esse código interessa?". Um evento gravado custa **~65 ns**, dos quais ~40 ns são o próprio
+`sys.monitoring` (piso inescapável).
+
+**Sob carga real — não microbenchmark.** [`benchmarks/web_overhead.py`](benchmarks/web_overhead.py): um app
+Flask servido por waitress, dirigido por clientes concorrentes, medindo p50/p90/p99 ponta a ponta com o
+gravador desligado, ligado (padrão) e ligado por linha. Execução de referência (Python 3.13, Linux; 8
+threads; 8 clientes; 12.000 requisições; 60 registros/req):
+
+| modo | throughput | p50 | p99 |
+|---|---:|---:|---:|
+| **off** (baseline) | 1240 req/s | 5,55 ms | 16,23 ms |
+| **on** — padrão | 1221 req/s (**98%**) | 5,61 ms (**1,01×**) | 16,25 ms (**1,00×**) |
+| **on** — por linha | 1050 req/s (85%) | 6,53 ms (1,18×) | 19,14 ms (1,18×) |
+
+No modo padrão "deixe ligado" o gravador fica **dentro da margem de ruído** em p50/p99 (~2% de throughput);
+por-linha é um custo de cauda que você paga só enquanto investiga. Reproduza com
+`python benchmarks/web_overhead.py`. Detalhes no [README](README.md#overhead--the-honest-picture) e em
+[TECHNICAL.md](TECHNICAL.md) §0.2.
 
 ## Testes
 

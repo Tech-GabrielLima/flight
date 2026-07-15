@@ -899,6 +899,34 @@ function every iteration, and **~1.0x** when your recorded code isn't the innerm
 common case). That is roughly **7–8× faster** than the previous Python-callback path, and within ~1.5×
 of the hard floor.
 
+### Under real load — a web app, not a microbenchmark
+
+Per-event nanoseconds are only convincing if they disappear into real request latency. So the repo ships
+[`benchmarks/web_overhead.py`](benchmarks/web_overhead.py): a **Flask app served by waitress**, driven by
+concurrent clients, measuring end-to-end **p50/p90/p99** with the recorder off, on (the default
+call/return granularity), and on with per-line recording. The server runs in a separate process so the
+load driver is never itself recorded, and — as in production — Flight records only the app's own handler
+code (stdlib and site-packages are excluded by default).
+
+Reference run (Python 3.13, Linux; Flask + waitress, 8 worker threads; 8 concurrent clients, 12,000
+requests after 1,500 warmup; handler builds 60 records/request):
+
+| mode | throughput | p50 | p90 | p99 |
+|---|---:|---:|---:|---:|
+| **off** (baseline) | 1240 req/s | 5.55 ms | 9.63 ms | 16.23 ms |
+| **on** — default (call/return) | 1221 req/s (**98%**) | 5.61 ms (**1.01×**) | 9.86 ms | 16.25 ms (**1.00×**) |
+| **on** — per-line (`record_lines`) | 1050 req/s (85%) | 6.53 ms (1.18×) | 11.34 ms | 19.14 ms (1.18×) |
+
+**In the default "leave it on" mode the recorder is within measurement noise at p50 and p99** (~2%
+throughput). Per-line recording — which you'd turn on only while actively investigating — costs ~18% at
+the tail. Reproduce (numbers will track your hardware):
+
+```console
+pip install pyflight flask waitress
+python benchmarks/web_overhead.py                       # default load
+python benchmarks/web_overhead.py --concurrency 16 --requests 12000 --n 80
+```
+
 The other lever is **event volume**, not per-event cost. `record_returns=False` drops the PY_RETURN
 events (the call path stays fully visible through PY_START, and returns are inferable) — that **halves**
 the events on call-heavy code, taking the pathological case from ~2.5x to ~1.7x. It changes nothing
