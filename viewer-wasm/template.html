@@ -276,6 +276,28 @@
   .suspects .nm { color:var(--accent); } .suspects .why { color:var(--warn); }
   .diag .more { font-family:var(--sans); color:var(--faint); font-size:12.5px; margin-top:14px; }
   .diag .more code { background:rgba(140,170,210,.1); padding:1px 6px; border-radius:5px; color:#9fc6ff; }
+  .diag h2 svg { width:16px; height:16px; vertical-align:-3px; margin-right:7px; color:var(--accent); }
+  .subh { font-family:var(--sans); color:var(--dim); font-size:11.5px; margin:16px 0 6px;
+    text-transform:uppercase; letter-spacing:.07em; }
+  .steps { counter-reset:st; list-style:none; padding:0; margin:0; }
+  .steps li { font-family:var(--sans); color:#cdd9e8; font-size:14px; line-height:1.55;
+    position:relative; padding:7px 0 7px 34px; }
+  .steps li::before { counter-increment:st; content:counter(st); position:absolute; left:0; top:6px;
+    width:23px; height:23px; border-radius:7px; display:grid; place-items:center; font-family:var(--mono);
+    font-size:12px; font-weight:700; color:#04121f; background:linear-gradient(120deg,var(--accent),var(--cyan)); }
+  .steps code, .verify code { background:rgba(88,166,255,.1); border:1px solid rgba(88,166,255,.18);
+    color:#bcd9ff; padding:0 5px; border-radius:5px; font-size:.9em; }
+  .fixbox { margin-top:8px; border:1px solid rgba(74,222,128,.24); border-radius:11px; overflow:hidden;
+    background:rgba(10,20,14,.4); }
+  .fixhead { display:flex; align-items:center; justify-content:space-between; padding:8px 12px;
+    background:rgba(74,222,128,.09); font-family:var(--sans); font-size:12.5px; color:#a7f0c0; }
+  .fixbox pre { margin:0; border:none; border-radius:0; background:transparent; box-shadow:none; }
+  .fixbox pre code { color:#d6f3e0; }
+  .copy { padding:3px 11px; font-size:12px; border-radius:7px; }
+  .copy.done { border-color:var(--ok); color:var(--ok); }
+  .verify { font-family:var(--sans); color:var(--dim); font-size:12.5px; margin-top:16px;
+    border-top:1px solid rgba(140,170,210,.09); padding-top:13px; }
+  .verify b { color:var(--ink); }
 
   .srcpath { font-family:var(--mono); color:var(--dim); font-size:12.5px; margin-bottom:9px; }
   .srcview { font-family:var(--mono); font-size:13px; border-radius:10px; overflow:hidden;
@@ -907,34 +929,91 @@ function suspicion(v) {
   return null;
 }
 
-// Plain-language cause + a candidate guard, from the exception + crash locals.
+// A step-by-step resolution from the exception + the crash frame's locals:
+// { cause(html), steps([html]), fix(plain code|null), fixLabel }.
 function diagnose(exc, crash) {
   const t = exc.type || '', m = exc.message || '';
+  const ln = crash ? crash.lineno : null;
   const empty = crash && (crash.locals || []).find(l => /\[0\]$/.test(l.value));
   const en = empty ? esc(empty.name) : null;
+  const none = crash && (crash.locals || []).find(l => l.value === 'None');
   switch (t) {
     case 'ZeroDivisionError': return {
-      cause: `A value was <b>divided by zero</b>. The denominator evaluated to 0 — most often <code>len(x)</code> on an empty collection${en?` (see <code>${en}</code>)`:''}, or a counter that never left 0.`,
-      fix: `<span class="c"># guard the empty / zero case before dividing</span>\n<span class="kw">if not</span> ${en||'denominator'}:\n    <span class="kw">return</span> 0.0` };
+      cause: `A value was <b>divided by zero</b>. The denominator became 0${en?` because <code>${en}</code> is empty, so <code>len(${en})</code> is 0`:` — often a count or length that stayed 0`}.`,
+      steps: [
+        `Decide what the result should be when there's nothing to divide — usually <code>0</code>, <code>None</code>, or skipping this item.`,
+        `Add a guard <b>before</b> the division${ln?` (line ${ln})`:''} so the empty / zero case returns that value instead of dividing.`,
+        `Re-run — or let flight prove the fix over the recorded run (below), no reproduction needed.` ],
+      fix: `if not ${en||'numbers'}:\n    return 0.0\nreturn total / len(${en||'numbers'})`,
+      fixLabel: 'Guard the empty case' };
     case 'IndexError': return {
-      cause: `An <b>index was out of range</b> — the sequence was shorter than the code assumed${en?` (<code>${en}</code> is empty)`:''}.`,
-      fix: `<span class="kw">if</span> ${en||'seq'}:\n    value = ${en||'seq'}[i]` };
+      cause: `An <b>index was out of range</b> — ${en?`<code>${en}</code> is empty, so `:''}the sequence was shorter than the code assumed.`,
+      steps: [
+        `Check the sequence isn't empty (or that the index is within <code>len(...)</code>) before you read it.`,
+        `Return a default, or skip, when it's too short.`,
+        `Confirm with flight (below).` ],
+      fix: `if ${en||'items'}:\n    value = ${en||'items'}[0]\nelse:\n    value = default`,
+      fixLabel: 'Check before indexing' };
     case 'KeyError': return {
       cause: `The key <code>${esc(m)}</code> was <b>missing from a dict</b>.`,
-      fix: `value = d.get(${esc(m)}, default)   <span class="c"># or: if ${esc(m)} in d: ...</span>` };
-    case 'AttributeError': return {
-      cause: /NoneType/.test(m)
-        ? `A value was <b>None</b> where an object was expected — a call above probably returned <code>None</code> instead of a real value.`
-        : `The object <b>didn't have the attribute</b> the code asked for — <span class="muted">${esc(m)}</span>.`, fix: null };
+      steps: [
+        `Decide a sensible default for when the key isn't present.`,
+        `Read with <code>.get(key, default)</code>, or test <code>key in d</code> first.`,
+        `If the key <em>should</em> always be there, fix whatever was supposed to set it upstream.` ],
+      fix: `value = d.get(${esc(m)}, default)   # instead of d[${esc(m)}]`,
+      fixLabel: 'Read with a default' };
+    case 'AttributeError': {
+      const nt = /NoneType/.test(m);
+      return {
+        cause: nt
+          ? `A value was <b>None</b> where an object was expected — a call above probably returned <code>None</code> instead of a real value.`
+          : `The object <b>didn't have the attribute</b> the code asked for — <span class="muted">${esc(m)}</span>.`,
+        steps: nt ? [
+          `Walk up the call stack below to find where this value became <code>None</code> (a function that returned nothing, or a missing default).`,
+          `Handle the <code>None</code> case, or make that function always return a real value.`,
+          `Confirm with flight (below).` ] : [
+          `Check the object's real type in the crash frame's locals below — it may not be what you think.`,
+          `Fix the attribute name, or convert the object to the type that has it.` ],
+        fix: nt ? `if ${none?esc(none.name):'obj'} is not None:\n    ${none?esc(none.name):'obj'}.attr   # use it here` : null,
+        fixLabel: 'Handle the None case' };
+    }
     case 'TypeError': return {
       cause: /NoneType/.test(m)
         ? `A <b>None</b> slipped into an operation that needed a real value — <span class="muted">${esc(m)}</span>.`
-        : `A value had the <b>wrong type</b> for this operation — <span class="muted">${esc(m)}</span>.`, fix: null };
-    case 'ValueError': return { cause: `Right type, <b>invalid value</b> — <span class="muted">${esc(m)}</span>.`, fix: null };
-    case 'FileNotFoundError': return { cause: `A file or path <b>didn't exist</b> when opened — <span class="muted">${esc(m)}</span>.`, fix: null };
-    case 'RecursionError': return { cause: `<b>Infinite recursion</b> — a base case is missing or never reached.`, fix: null };
-    case 'StopIteration': return { cause: `An iterator was <b>exhausted</b> — <code>next()</code> was called with nothing left.`, fix: null };
-    default: return { cause: `<b>${esc(t)}</b>${m?`: ${esc(m)}`:''}. The highlighted locals below are the usual suspects.`, fix: null };
+        : `A value had the <b>wrong type</b> for this operation — <span class="muted">${esc(m)}</span>.`,
+      steps: [
+        `Look at the operands in the crash frame's locals below and check their types.`,
+        `Guard against <code>None</code>, or convert the value to the expected type before the operation.` ],
+      fix: null, fixLabel: null };
+    case 'ValueError': return {
+      cause: `Right type, but an <b>invalid value</b> — <span class="muted">${esc(m)}</span>.`,
+      steps: [
+        `Validate or normalise the input before this point.`,
+        `Reject or coerce the bad value, and decide what to do when it's invalid.` ],
+      fix: null, fixLabel: null };
+    case 'FileNotFoundError': return {
+      cause: `A file or path <b>didn't exist</b> when it was opened — <span class="muted">${esc(m)}</span>.`,
+      steps: [
+        `Confirm the path is what you expect (check <code>cwd</code> in the recording details).`,
+        `Create it, or handle the missing-file case gracefully.` ],
+      fix: `from pathlib import Path\nif Path(path).exists():\n    ...`,
+      fixLabel: 'Check the path first' };
+    case 'RecursionError': return {
+      cause: `<b>Infinite recursion</b> — a base case is missing or never reached.`,
+      steps: [
+        `Find the recursive call in the stack below and check the argument actually shrinks toward a base case.`,
+        `Add or fix the base case that stops the recursion.` ],
+      fix: null, fixLabel: null };
+    case 'StopIteration': return {
+      cause: `An iterator was <b>exhausted</b> — <code>next()</code> was called with nothing left.`,
+      steps: [ `Give <code>next()</code> a default: <code>next(it, default)</code>, or iterate with a <code>for</code> loop.` ],
+      fix: `value = next(it, default)`, fixLabel: 'Give next() a default' };
+    default: return {
+      cause: `<b>${esc(t)}</b>${m?`: ${esc(m)}`:''}.`,
+      steps: [
+        `Start from the highlighted locals below — empty, zero or <code>None</code> values are the usual suspects.`,
+        `Trace where the bad value came from with <code>flight why</code>, then guard or fix it (below).` ],
+      fix: null, fixLabel: null };
   }
 }
 
@@ -986,16 +1065,32 @@ function render(s, name) {
       or deterministic recording. ${s.event_count} events across ${s.code_count} code objects.</div></div>`;
   }
 
-  // 2 — how to fix (heuristic, offline)
+  // 2 — how to fix this error (heuristic, offline)
   if (exc) {
     const d = diagnose(exc, crash);
     const suspects = crash ? (crash.locals||[]).map(l => [l, suspicion(l.value)]).filter(x => x[1]) : [];
-    html += `<div class="card diag"><h2>How to fix</h2><div class="cause"><span class="ic">◆</span>${d.cause}</div>`;
-    if (suspects.length) html += `<ul class="suspects">` + suspects.map(([l, why]) =>
-      `<li><span class="nm">${esc(l.name)}</span> = ${esc(l.value)} <span class="why">— ${esc(why)}</span></li>`).join('') + `</ul>`;
-    if (d.fix) html += `<pre><code>${d.fix}</code></pre>`;
-    html += `<div class="more">Confirm the cause with <code>flight why --var &lt;name&gt;</code>, or let flight
-      propose <em>and verify</em> a patch over the recorded tape with <code>flight fix</code>.</div></div>`;
+    const primary = suspects.length ? esc(suspects[0][0].name)
+      : (crash && crash.locals && crash.locals[0] ? esc(crash.locals[0].name) : 'x');
+    html += `<div class="card diag"><h2>` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2-2 2.5-2.5z"/></svg>` +
+      `How to fix this error</h2><div class="cause"><span class="ic">◆</span>${d.cause}</div>`;
+    if (suspects.length) {
+      html += `<div class="subh">The values to look at</div><ul class="suspects">` + suspects.map(([l, why]) =>
+        `<li><span class="nm">${esc(l.name)}</span> = ${esc(l.value)} <span class="why">— ${esc(why)}</span></li>`).join('') + `</ul>`;
+    }
+    if (d.steps && d.steps.length) {
+      html += `<div class="subh">Steps to resolve</div><ol class="steps">` +
+        d.steps.map(s => `<li>${s}</li>`).join('') + `</ol>`;
+    }
+    if (d.fix) {
+      html += `<div class="subh">${esc(d.fixLabel || 'A candidate fix')}</div>` +
+        `<div class="fixbox"><div class="fixhead"><span>python</span>` +
+        `<button class="copy" data-copy="${esc(d.fix).replace(/"/g,'&quot;')}">copy</button></div>` +
+        `<pre><code>${esc(d.fix)}</code></pre></div>`;
+    }
+    html += `<div class="verify"><b>Prove it — don't guess.</b> <code>flight why --var ${primary}</code>
+      traces exactly where the value came from; <code>flight fix crash.flight</code> proposes a patch and
+      <em>re-runs the recorded tape</em> to confirm the crash is gone with no behaviour change.</div></div>`;
   }
 
   // 3 — where it happened: the crash frame's source + locals
@@ -1044,6 +1139,13 @@ function render(s, name) {
       const g = d.closest('details.libgroup'); if (g) g.open = true;
       d.open = true; d.scrollIntoView({ block:'center' });
     }
+  }));
+
+  // copy the candidate fix
+  out.querySelectorAll('.copy').forEach(b => b.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'copied ✓'; b.classList.add('done'); }
+    catch { b.textContent = 'select & copy'; }
+    setTimeout(() => { b.textContent = 'copy'; b.classList.remove('done'); }, 1600);
   }));
 }
 
