@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "pyflight"
-version = "0.0.4"
+version = "0.0.5"
 description = "Your traceback says where Python died; flight says why — a post-mortem black box you open, query (why is this value what it is?), and re-run."
 readme = "README.md"
 license = { text = "MIT" }
