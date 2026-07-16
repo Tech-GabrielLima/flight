@@ -668,7 +668,7 @@ def test_render_comment_uses_title(tmp_path, title):
 def test_render_comment_repro_hint_toggle(tmp_path, repro_hint):
     src = _crash_flight(tmp_path / "c.flight", _div_zero)
     md = render_comment(src, repro_hint=repro_hint)
-    assert ("Reproduce locally" in md) is repro_hint
+    assert ("Open this black box" in md) is repro_hint
 
 
 def test_render_comment_ring_only_has_no_crash_detail(tmp_path):
